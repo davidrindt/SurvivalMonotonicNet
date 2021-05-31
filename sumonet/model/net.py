@@ -16,7 +16,6 @@ import pandas as pd
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from torchvision.transforms import ToTensor
 
-
 totensor = ToTensor()
 
 
@@ -98,12 +97,11 @@ class CovNet(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.layer_widths = self.config['cov_layer_widths']
+        self.layer_widths = self.config['cov_net_widths']
         self.linear_transforms = nn.ModuleList()
         self.activation = getattr(F, config['activation'])
         for input_size, output_size in zip(self.layer_widths, self.layer_widths[1:]):
             self.linear_transforms.append(nn.Linear(input_size, output_size))
-
 
     def forward(self, x):
         for linear_transform in self.linear_transforms:
@@ -111,19 +109,61 @@ class CovNet(nn.Module):
         return x
 
 
+def get_bounding_operation(bounding_operation_name):
+    if bounding_operation_name == 'abs':
+        return torch.abs
+    elif bounding_operation_name == 'square':
+        return torch.square
+
+
+class BoundedLinear(nn.Linear):
+    def __init__(self, input_size, output_size, bounding_operation_name):
+        super().__init__(input_size, output_size)
+        self.bounding_operation = get_bounding_operation(bounding_operation_name)
+        self.bounded_weight = self.bounding_operation(self.weight)
+
+    def forward(self, x):
+        return F.linear(x, self.bounded_weight, self.bias)
+
+class MixedLinear(nn.Linear):
+    def __init__(self, input_size, output_size, bounding_operation_name):
+        super().__init__(input_size, output_size)
+        self.bounding_operation = get_bounding_operation(bounding_operation_name)
+        self.bounded_weight = self.bounding_operation(self.weight[:, 0])
+        self.unrestricted_weight = self.weight[:, 1:]
+
+    def forward(self, x, t):
+        print(f' weight {self.weight}, bounded weight {self.bounded_weight}, unrestricted weight, {self.unrestricted_weight}')
+        return F.linear(x, self.unrestricted_weight, self.bias) + F.linear(t, self.bounded_weight)
+
+class MixedNet(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.layer_widths = config['mixed_net_widths']
+
 
 if __name__ == '__main__':
-
     # Initiate train, test set
     train_set, test_set = load_data('metabric')
     print(len(test_set))
     cov, time, event = train_set[1:3]
 
     # Define the config file
-    config = {'cov_layer_widths' : [9, 10, 1],
+    config = {'cov_net_widths': [9, 10, 1],
               'activation': 'tanh'
               }
 
     # Initiate the net
     net = CovNet(config)
     print(net(cov))
+
+    # Initiate the bounded_layer
+    bounded_linear = BoundedLinear(9, 1, 'square')
+    print(bounded_linear(cov))
+
+    print(bounded_linear.weight)
+    print(bounded_linear.bounded_weight)
+
+    # Initiate the mixed layer
+    mixed_linear = MixedLinear(10, 1, 'abs')
+    print(mixed_linear(cov, time))
