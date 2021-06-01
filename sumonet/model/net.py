@@ -82,9 +82,12 @@ def preprocess(df, scaling_type_cov='standard', scaling_type_time='standard'):
 
 class SurvivalDataset(torch.utils.data.Dataset):
     def __init__(self, cov, time, event):
+        super().__init__()
+        self.cov_dim = np.shape(cov)[1]
         self.cov = torch.from_numpy(cov)
         self.time = torch.from_numpy(time)
         self.event = torch.from_numpy(event)
+
 
     def __len__(self):
         return len(self.event)
@@ -125,6 +128,7 @@ class BoundedLinear(nn.Linear):
     def forward(self, x):
         return F.linear(x, self.bounded_weight, self.bias)
 
+
 class MixedLinear(nn.Linear):
     def __init__(self, input_size, output_size, bounding_operation_name):
         super().__init__(input_size, output_size)
@@ -136,7 +140,11 @@ class MixedLinear(nn.Linear):
         print(f' weight {self.weight}, bounded weight {self.bounded_weight}, unrestricted weight, {self.unrestricted_weight}')
         return F.linear(x, self.unrestricted_weight, self.bias) + F.linear(t, self.bounded_weight)
 
+
 class MixedNet(nn.Module):
+    """
+    The mixed net consists of first a MixedLinear layer, and then BoundedLinear layers.
+    """
     def __init__(self, config):
         super().__init__()
         self.layer_widths = config['mixed_net_widths']
@@ -147,6 +155,7 @@ if __name__ == '__main__':
     train_set, test_set = load_data('metabric')
     print(len(test_set))
     cov, time, event = train_set[1:3]
+    print('dim', test_set[1, 0].shape[1])
 
     # Define the config file
     config = {'cov_net_widths': [9, 10, 1],
@@ -156,7 +165,7 @@ if __name__ == '__main__':
     # Initiate the net
     net = CovNet(config)
     print(net(cov))
-
+    print(net.linear_transforms)
     # Initiate the bounded_layer
     bounded_linear = BoundedLinear(9, 1, 'square')
     print(bounded_linear(cov))
