@@ -15,7 +15,8 @@ import pycox
 import pandas as pd
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from torchvision.transforms import ToTensor
-
+from sklearn.model_selection import train_test_split
+import sklearn
 totensor = ToTensor()
 
 
@@ -30,70 +31,50 @@ def load_data(dataset):
         df = pycox.datasets.metabric.read_df()
     else:
         print('Dataset not found')
-    cov, time, event = preprocess(df)
+    df = preprocess(df)
 
-    # Turn into a torch Dataset and split into train and test
-    full_dataset = SurvivalDataset(cov, time, event)
-    train_size = int(np.floor(0.8 * len(full_dataset)))
-    test_size = len(full_dataset) - train_size
-    train_set, test_set = torch.utils.data.random_split(full_dataset, [train_size, test_size])
-
-    return train_set, test_set
+    # Split the dataset
+    train, val, test = np.split(df.sample(frac=1), [int(.6 * len(df)), int(.8 * len(df))])
+    train, val, test = SurvivalDataset(train), SurvivalDataset(val), SurvivalDataset(test)
+    return train, val, test
 
 
-def scale(arr, scaling_type):
-    """
-    :param arr: np.ndarry - to be scaled
-    :param scaling_type: - standard or minmax scaling
-    :return: ndarray - scaled array
-    """
-
-    # Select the scaler from sklearn
-    assert scaling_type in ['standard', 'minmax']
-    if scaling_type == 'standard':
-        scaler = StandardScaler()
-    else:
-        scaler = MinMaxScaler()
-
-    # Do the scaling
-    arr = scaler.fit_transform(arr)
-
-    return arr
 
 
-def preprocess(df, scaling_type_cov='standard', scaling_type_time='standard'):
+def preprocess(df, scaling_type_cov='StandardScaler', scaling_type_time='StandardScaler'):
     """
     :param df: pd.dataframe - to be preprocessed
     :param scaling_type_cov: str - how to scale the covariates
     :param scaling_type_time:  str - how to scale the times
     :return: np.ndarray - cov, time, event
     """
+    time_scaler = getattr(sklearn.preprocessing, scaling_type_time)()
+    cov_scaler = getattr(sklearn.preprocessing, scaling_type_cov)()
 
     # Select the covariates, times, events
-    cov = df.drop(['duration', 'event'], axis=1).to_numpy()
-    time, event = df['duration'].to_numpy()[:, None], df['event'].to_numpy()[:, None]
+    for col in df.columns:
+        if col == 'event':
+            continue
+        elif col == 'time':
+            df[col] = time_scaler.fit_transform(df[col].to_numpy()[:, None])
+        else:
+            df[col] = cov_scaler.fit_transform(df[col].to_numpy()[:, None])
 
-    # Perform the scaling
-    cov = scale(cov, scaling_type_cov)
-    time = scale(time, scaling_type_time)
-
-    return cov, time, event
+    return df
 
 
 class SurvivalDataset(torch.utils.data.Dataset):
-    def __init__(self, cov, time, event):
+    def __init__(self, df):
         super().__init__()
-        self.cov_dim = np.shape(cov)[1]
-        self.cov = torch.from_numpy(cov)
-        self.time = torch.from_numpy(time)
-        self.event = torch.from_numpy(event)
-
+        self.cov = torch.from_numpy(df.drop(['duration', 'event'], axis=1).to_numpy())
+        self.event_time = torch.from_numpy(df['duration'].to_numpy()[:, None])
+        self.event = torch.from_numpy(df['event'].to_numpy()[:, None])
 
     def __len__(self):
         return len(self.event)
 
     def __getitem__(self, idx):
-        return self.cov[idx], self.time[idx], self.event[idx]
+        return self.cov[idx], self.event_time[idx], self.event[idx]
 
 
 class CovNet(nn.Module):
@@ -152,10 +133,8 @@ class MixedNet(nn.Module):
 
 if __name__ == '__main__':
     # Initiate train, test set
-    train_set, test_set = load_data('metabric')
-    print(len(test_set))
-    cov, time, event = train_set[1:3]
-    print('dim', test_set[1, 0].shape[1])
+    train_set, val_set, test_set = load_data('metabric')
+    cov, event_time, event = train_set[1:3]
 
     # Define the config file
     config = {'cov_net_widths': [9, 10, 1],
@@ -175,4 +154,4 @@ if __name__ == '__main__':
 
     # Initiate the mixed layer
     mixed_linear = MixedLinear(10, 1, 'abs')
-    print(mixed_linear(cov, time))
+    print(mixed_linear(cov, event_time))
