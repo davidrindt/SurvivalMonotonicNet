@@ -17,6 +17,7 @@ from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from torchvision.transforms import ToTensor
 from sklearn.model_selection import train_test_split
 import sklearn
+
 totensor = ToTensor()
 
 
@@ -30,6 +31,7 @@ def load_data(dataset):
     if dataset == 'metabric':
         df = pycox.datasets.metabric.read_df()
     else:
+        df = None
         print('Dataset not found')
     df = preprocess(df)
 
@@ -37,8 +39,6 @@ def load_data(dataset):
     train, val, test = np.split(df.sample(frac=1), [int(.6 * len(df)), int(.8 * len(df))])
     train, val, test = SurvivalDataset(train), SurvivalDataset(val), SurvivalDataset(test)
     return train, val, test
-
-
 
 
 def preprocess(df, scaling_type_cov='StandardScaler', scaling_type_time='StandardScaler'):
@@ -118,7 +118,8 @@ class MixedLinear(nn.Linear):
         self.unrestricted_weight = self.weight[:, 1:]
 
     def forward(self, x, t):
-        print(f' weight {self.weight}, bounded weight {self.bounded_weight}, unrestricted weight, {self.unrestricted_weight}')
+        # print(f' weight {self.weight}, bounded weight {self.bounded_weight}, unrestricted weight,
+        # {self.unrestricted_weight}')
         return F.linear(x, self.unrestricted_weight, self.bias) + F.linear(t, self.bounded_weight)
 
 
@@ -126,6 +127,7 @@ class MixedNet(nn.Module):
     """
     The mixed net consists of first a MixedLinear layer, and then BoundedLinear layers.
     """
+
     def __init__(self, config):
         super().__init__()
         self.layer_widths = config['mixed_net_widths']
