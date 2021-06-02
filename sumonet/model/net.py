@@ -165,6 +165,14 @@ class TotalNet(nn.Module):
         f_approx = torch.sigmoid(h_t) * (1 - torch.sigmoid(h_t)) * h_derivative_approx
         return f_approx
 
+    def forward(self, x, t, d):
+        event_mask = (d == 1)
+        x_obs, t_obs = torch.masked_select(x, event_mask), torch.masked_select(t, event_mask)
+        x_cens, t_cens = torch.masked_select(x, ~ event_mask), torch.masked_select(t, ~ event_mask)
+        return self.forward_S(x_cens, t_cens), self.forward_f_approx(x_obs, t_obs)
+
+def get_cov_widths(cov_dim, num_layers, width_layers):
+    widths = [width_layers for i in num_layers-1]
 
 if __name__ == '__main__':
     # Initiate train, test set
@@ -200,6 +208,8 @@ if __name__ == '__main__':
 
     # Initiate the total net
     total_net = TotalNet(config)
-    print(total_net.forward_h(cov, event_time))
-    print(total_net.forward_S(cov, event_time))
-    print('f approx', total_net.forward_f_approx(cov, event_time))
+    # print(total_net.forward_h(cov, event_time))
+    # print(total_net.forward_S(cov, event_time))
+    # print('f approx', total_net.forward_f_approx(cov, event_time))
+    print('forward', total_net(cov, event_time, event))
+
