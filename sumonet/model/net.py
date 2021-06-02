@@ -84,7 +84,7 @@ class CovNet(nn.Module):
         self.config = config
         self.layer_widths = self.config['cov_net_widths']
         self.linear_transforms = nn.ModuleList()
-        self.activation = getattr(F, config['activation'])
+        self.activation = getattr(torch, config['activation'])
         for input_size, output_size in zip(self.layer_widths, self.layer_widths[1:]):
             self.linear_transforms.append(nn.Linear(input_size, output_size))
 
@@ -124,7 +124,7 @@ class MixedNet(nn.Module):
         super().__init__()
         self.layer_widths = config['mixed_net_widths']
         self.bounded_transforms = nn.ModuleList()
-        self.activation = getattr(F, config['activation'])
+        self.activation = getattr(torch, config['activation'])
         self.mixed_linear = MixedLinear(self.layer_widths[0], self.layer_widths[1])
         for input_size, output_size in zip(self.layer_widths[1:], self.layer_widths[2:]):
             self.bounded_transforms.append(BoundedLinear(input_size, output_size))
@@ -142,6 +142,7 @@ class MixedNet(nn.Module):
 
 class TotalNet(nn.Module):
     def __init__(self, config):
+        super().__init__()
         self.cov_net = CovNet(config)
         self.mixed_net = MixedNet(config)
 
@@ -156,7 +157,7 @@ class TotalNet(nn.Module):
 
     def forward_f_approx(self, x, t):
         h_t = self.forward_h(x, t)
-        h_t_plus = self.forward(x, t + 1e-6)
+        h_t_plus = self.forward_h(x, t + 1e-6)
         h_derivative_approx = (h_t_plus - h_t) / 1e-6
         f_approx = - torch.sigmoid(h_t) * (1 - torch.sigmoid(h_t)) * h_derivative_approx
         return f_approx
@@ -168,9 +169,9 @@ if __name__ == '__main__':
     cov, event_time, event = train_set[1:3]
     print(train_set.cov_dim)
     # Define the config file
-    config = {'cov_net_widths': [9, 10, 1],
+    config = {'cov_net_widths': [9, 9, 9],
               'activation': 'tanh',
-              'mixed_net_widths': [10, 3, 1]
+              'mixed_net_widths': [10, 3, 3]
               }
 
     # Initiate the net
@@ -194,3 +195,7 @@ if __name__ == '__main__':
     mixed_net(cov, event_time)
 
     # Initiate the total net
+    total_net = TotalNet(config)
+    print(total_net.forward_h(cov, event_time))
+    print(total_net.forward_S(cov, event_time))
+    print(total_net.forward_f_approx(cov, event_time))
