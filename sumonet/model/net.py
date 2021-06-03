@@ -171,9 +171,17 @@ class TotalNet(nn.Module):
         x_cens, t_cens = torch.masked_select(x, ~ event_mask), torch.masked_select(t, ~ event_mask)
         return self.forward_S(x_cens, t_cens), self.forward_f_approx(x_obs, t_obs)
 
-def get_cov_widths(cov_dim, num_layers, width_layers):
-    widths = [width_layers for i in num_layers-1]
 
+def get_cov_widths(cov_dim, num_layers, layer_width_cov):
+    widths = [layer_width_cov for _ in num_layers + 1]
+    widths[0] = cov_dim
+
+
+def get_mixed_widths(layer_width_cov, layer_width_mixed, num_layers):
+    widths = [layer_width_mixed for _ in num_layers + 1]
+    widths[0] = layer_width_cov
+    widths[-1] = 1
+    
 if __name__ == '__main__':
     # Initiate train, test set
     train_set, val_set, test_set = load_data('metabric')
