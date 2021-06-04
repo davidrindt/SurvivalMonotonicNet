@@ -18,6 +18,10 @@ from torchvision.transforms import ToTensor
 from sklearn.model_selection import train_test_split
 import sklearn
 
+seed = 2
+torch.manual_seed(seed)
+np.random.seed(seed)
+
 totensor = ToTensor()
 
 
@@ -89,6 +93,7 @@ class CovNet(nn.Module):
             self.linear_transforms.append(nn.Linear(input_size, output_size))
 
     def forward(self, x):
+        # print('cov', x)
         for linear_transform in self.linear_transforms:
             x = self.activation(linear_transform(x))
         return x
@@ -161,32 +166,43 @@ class TotalNet(nn.Module):
         h_t = self.forward_h(x, t)
         h_t_plus = self.forward_h(x, t + self.config['epsilon'])
         h_derivative_approx = (h_t_plus - h_t) / self.config['epsilon']
-        print('h derivative approx', h_derivative_approx)
         f_approx = torch.sigmoid(h_t) * (1 - torch.sigmoid(h_t)) * h_derivative_approx
         return f_approx
 
     def forward(self, x, t, d):
-        event_mask = (d == 1)
-        x_obs, t_obs = torch.masked_select(x, event_mask), torch.masked_select(t, event_mask)
-        x_cens, t_cens = torch.masked_select(x, ~ event_mask), torch.masked_select(t, ~ event_mask)
+        event_mask = (d == 1).ravel()
+        x_obs, t_obs = x[event_mask, :], t[event_mask, :]
+        x_cens, t_cens = x[~ event_mask, :], t[~ event_mask, :]
+        print('forward s', self.forward_S(x_cens, t_cens))
         return self.forward_S(x_cens, t_cens), self.forward_f_approx(x_obs, t_obs)
 
 
-def get_cov_widths(cov_dim, num_layers, layer_width_cov):
-    widths = [layer_width_cov for _ in num_layers + 1]
+def get_cov_widths(cov_dim, layer_width_cov, num_layers):
+    widths = [layer_width_cov for _ in range(num_layers + 1)]
     widths[0] = cov_dim
+    return widths
 
 
 def get_mixed_widths(layer_width_cov, layer_width_mixed, num_layers):
-    widths = [layer_width_mixed for _ in num_layers + 1]
-    widths[0] = layer_width_cov
+    widths = [layer_width_mixed for _ in range(num_layers + 1)]
+    widths[0] = layer_width_cov + 1
     widths[-1] = 1
-    
+    return widths
+
+
+def log_loss(survival, density):
+    print('survival', survival.flatten())
+    print('density', density.flatten())
+    cat = torch.cat((survival.flatten(), density.flatten()))
+    print('cat', cat)
+    return - torch.mean(torch.log(cat))
+
+
 if __name__ == '__main__':
     # Initiate train, test set
     train_set, val_set, test_set = load_data('metabric')
     cov, event_time, event = train_set[1:3]
-    print(train_set.cov_dim)
+    print('cov dim', train_set.cov_dim)
     # Define the config file
     config = {'cov_net_widths': [9, 7, 7],
               'activation': 'tanh',
@@ -215,9 +231,13 @@ if __name__ == '__main__':
     # mixed_net(cov, event_time)
 
     # Initiate the total net
+    config['cov_net_widths'] = get_cov_widths(9, 3, 1)
+    config['mixed_net_widths'] = get_mixed_widths(3, 3, 1)
     total_net = TotalNet(config)
     # print(total_net.forward_h(cov, event_time))
     # print(total_net.forward_S(cov, event_time))
     # print('f approx', total_net.forward_f_approx(cov, event_time))
-    print('forward', total_net(cov, event_time, event))
+    survival, density = total_net(cov, event_time, event)
+    print('forward', survival, density)
+    print('loss', log_loss(survival, density))
 
