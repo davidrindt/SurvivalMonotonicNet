@@ -169,12 +169,20 @@ class TotalNet(nn.Module):
         f_approx = torch.sigmoid(h_t) * (1 - torch.sigmoid(h_t)) * h_derivative_approx
         return f_approx
 
+    def forward_f_exact(self, x, t):
+        y = - self.forward_S(x, t)
+        f = torch.autograd.grad(outputs=y, inputs=t, grad_outputs=torch.ones_like(y), create_graph=True)[0]
+        return f
+
     def forward(self, x, t, d):
         event_mask = (d == 1).ravel()
         x_obs, t_obs = x[event_mask, :], t[event_mask, :]
         x_cens, t_cens = x[~ event_mask, :], t[~ event_mask, :]
-        print('forward s', self.forward_S(x_cens, t_cens))
-        return self.forward_S(x_cens, t_cens), self.forward_f_approx(x_obs, t_obs)
+        t_obs.requires_grad = True
+        forward_f = self.forward_f_exact if self.config['exact'] else self.forward_f_approx
+        S = self.forward_S(x_cens, t_cens)
+        f = forward_f(x_obs, t_obs)
+        return S,  f
 
 
 def get_cov_widths(cov_dim, layer_width_cov, num_layers):
@@ -191,23 +199,21 @@ def get_mixed_widths(layer_width_cov, layer_width_mixed, num_layers):
 
 
 def log_loss(survival, density):
-    print('survival', survival.flatten())
-    print('density', density.flatten())
     cat = torch.cat((survival.flatten(), density.flatten()))
-    print('cat', cat)
     return - torch.mean(torch.log(cat))
 
 
 if __name__ == '__main__':
     # Initiate train, test set
     train_set, val_set, test_set = load_data('metabric')
-    cov, event_time, event = train_set[1:3]
+    cov, event_time, event = train_set[1:10]
     print('cov dim', train_set.cov_dim)
     # Define the config file
     config = {'cov_net_widths': [9, 7, 7],
               'activation': 'tanh',
               'mixed_net_widths': [8, 3, 1],
-              'epsilon': 1e-5
+              'epsilon': 1e-5,
+              'exact': True
               }
 
     # Initiate the net
