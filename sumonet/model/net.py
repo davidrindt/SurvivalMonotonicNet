@@ -198,8 +198,8 @@ def get_mixed_widths(layer_width_cov, layer_width_mixed, num_layers):
     return widths
 
 
-def log_loss(survival, density):
-    cat = torch.cat((survival.flatten(), density.flatten()))
+def log_loss(S, f):
+    cat = torch.cat((S.flatten(), f.flatten()))
     return - torch.mean(torch.log(cat))
 
 
@@ -243,7 +243,9 @@ if __name__ == '__main__':
     # print(total_net.forward_h(cov, event_time))
     # print(total_net.forward_S(cov, event_time))
     # print('f approx', total_net.forward_f_approx(cov, event_time))
-    survival, density = total_net(cov, event_time, event)
-    print('forward', survival, density)
-    print('loss', log_loss(survival, density))
+    S, f = total_net(cov, event_time, event)
+    print('forward', S, f)
+    print('loss', log_loss(S, f))
+    loss = log_loss(S, f)
+    loss.backward()
 
