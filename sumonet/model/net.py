@@ -42,6 +42,7 @@ def load_data(dataset):
     # Split the dataset
     train, val, test = np.split(df.sample(frac=1), [int(.6 * len(df)), int(.8 * len(df))])
     train, val, test = SurvivalDataset(train), SurvivalDataset(val), SurvivalDataset(test)
+    print('lens', len(train), len(val), len(test))
     return train, val, test
 
 
@@ -104,21 +105,22 @@ class BoundedLinear(nn.Linear):
     def __init__(self, input_size, output_size, bounding_operation_name='abs'):
         super().__init__(input_size, output_size)
         self.bounding_operation = getattr(torch, bounding_operation_name)
-        self.bounded_weight = self.bounding_operation(self.weight)
+        # self.bounded_weight = self.bounding_operation(self.weight)
 
     def forward(self, x):
-        return F.linear(x, self.bounded_weight, self.bias)
+        return F.linear(x, self.bounding_operation(self.weight), self.bias)
 
 
-class MixedLinear(nn.Linear):
+class MixedLinear(nn.Module):
     def __init__(self, input_size, output_size, bounding_operation_name='abs'):
-        super().__init__(input_size, output_size)
+        super().__init__()
         self.bounding_operation = getattr(torch, bounding_operation_name)
-        self.bounded_weight = self.bounding_operation(self.weight[:, 0][:, None])
-        self.unrestricted_weight = self.weight[:, 1:]
+        self.bounded_linear = BoundedLinear(1, output_size, bounding_operation_name)
+        self.linear = nn.Linear(input_size - 1, output_size, bias=False)
 
     def forward(self, x, t):
-        return F.linear(x, self.unrestricted_weight) + F.linear(t, self.bounded_weight) + self.bias
+        return self.bounded_linear(t) + self.linear(x)
+
 
 
 class MixedNet(nn.Module):
@@ -183,7 +185,7 @@ class TotalNet(nn.Module):
         forward_f = self.forward_f_exact if self.config['exact'] else self.forward_f_approx
         S = self.forward_S(x_cens, t_cens)
         f = forward_f(x_obs, t_obs)
-        return S, f
+        return S,  f
 
 
 def get_cov_widths(cov_dim, layer_width_cov, num_layers):
@@ -197,6 +199,18 @@ def get_mixed_widths(layer_width_cov, layer_width_mixed, num_layers):
     widths[0] = layer_width_cov + 1
     widths[-1] = 1
     return widths
+
+
+def log_loss_mean(S, f):
+    cat = torch.cat((S.flatten(), f.flatten()))
+    eps = 1e-7
+    return - torch.mean(torch.log(cat + eps))
+
+
+def log_loss_sum(S, f):
+    cat = torch.cat((S.flatten(), f.flatten()))
+    eps = 1e-7
+    return - torch.sum(torch.log(cat + eps))
 
 
 def train_sumo_net(config, train, val, checkpoint_dir=None):
@@ -217,27 +231,79 @@ def train_sumo_net(config, train, val, checkpoint_dir=None):
     # Get the train and val loader
     train_loader = torch.utils.data.DataLoader(train, batch_size=config['batch_size'], shuffle=True)
     val_loader = torch.utils.data.DataLoader(val, batch_size=config['batch_size'], shuffle=True)
+    best_val_loss = np.inf
+
+    for epoch in range(config['num_epochs']):
+        print(f'epoch {epoch}')
+        running_loss, epoch_steps = 0.0, 0
+
+        for data in train_loader:
+
+            # Get the data
+            cov, event_time, event = data
+            cov, event_time, event = cov.to(device), event_time.to(device), event.to(device)
+
+
+            # Zero the gradient
+            optimizer.zero_grad()
+
+            # Compute probabilities, likelihood, gradients, and take step
+            S, f = net(cov, event_time, event)
+            loss = log_loss_mean(S, f)
+            print('lossss', loss)
+            loss.backward()
+            optimizer.step()
+
+            # Track the loss
+            running_loss += loss.item()
+            epoch_steps += 1
+            print('epoch steps', epoch_steps)
+            if epoch_steps % 50 == 0:
+                print(f'epoch {epoch} epoch_steps {epoch_steps} loss {running_loss / epoch_steps}')
+
+        # Validation loss
+        val_loss, val_steps = 0, 0
+
+        for data in val_loader:
+            with torch.no_grad():
+
+                # Get the data
+                cov, event_time, event = data
+                cov, event_time, event = cov.to(device), event_time.to(device), event.to(device)
+
+                # Compute probabilities and the loss
+                S, f = net(cov, event_time, event)
+                val_loss += log_loss_sum(S, f)
+
+        print(f'epoch {epoch} val loss {val_loss / len(val)}')
+
+        # Save the model
+        # checkpoint_path = os.path.join(checkpoint_dir, 'checkpoint')
+        # if val_loss < best_val_loss:
+        #     best_val_loss = val_loss
+        #     torch.save((net.state_dict(), optimizer.state_dict()), checkpoint_path)
+
+
+    print('finished training')
 
 
 
 
 
-def log_loss(S, f):
-    cat = torch.cat((S.flatten(), f.flatten()))
-    return - torch.mean(torch.log(cat))
 
 
 cov_dim = {'metabric': 9}
 
 if __name__ == '__main__':
+    torch.autograd.set_detect_anomaly(True)
     # Initiate train, test set
-    train_set, val_set, test_set = load_data('metabric')
-    cov, event_time, event = train_set[1:10]
-    print('cov dim', train_set.cov_dim)
+    train, val, test = load_data('metabric')
+    # cov, event_time, event = train[1:10]
+    # print('cov dim', train.cov_dim)
     # Define the config file
-    config = {'activation': 'tanh', 'epsilon': 1e-5, 'exact': True, 'lr': 0.1, 'num_layers_mixed': 1,
-               'num_layers_cov': 1, 'width_cov': 3, 'width_mixed': 3, 'num_layers_cov': 1, 'data': 'metabric',
-              'batch_size': 128}
+    config = {'activation': 'tanh', 'epsilon': 1e-6, 'exact': False, 'lr': 0.00001, 'num_layers_mixed': 3,
+               'num_layers_cov': 3, 'width_cov': 32, 'width_mixed': 32, 'num_layers_cov': 3, 'data': 'metabric',
+              'batch_size': 10024, 'num_epochs':100}
 
     # Initiate the net
     # net = CovNet(config)
@@ -260,12 +326,15 @@ if __name__ == '__main__':
     # mixed_net(cov, event_time)
 
     # Initiate the total net
-    total_net = TotalNet(config)
+    # total_net = TotalNet(config)
     # print(total_net.forward_h(cov, event_time))
     # print(total_net.forward_S(cov, event_time))
     # print('f approx', total_net.forward_f_approx(cov, event_time))
-    S, f = total_net(cov, event_time, event)
-    print('forward', S, f)
-    print('loss', log_loss(S, f))
-    loss = log_loss(S, f)
-    loss.backward()
+    # print('f exact', total_net.forward_f_exact(cov, event_time))
+
+    # S, f = total_net(cov, event_time, event)
+    # # print('forward', S, f)
+    # # print('loss', log_loss(S, f))
+    # loss = log_loss(S, f)
+    # loss.backward()
+    train_sumo_net(config, train, val)
