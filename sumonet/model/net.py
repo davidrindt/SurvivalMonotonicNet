@@ -86,7 +86,8 @@ class CovNet(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.layer_widths = self.config['cov_net_widths']
+        # self.layer_widths = self.config['cov_net_widths']
+        self.layer_widths = get_cov_widths(cov_dim[config['data']], config['width_cov'], config['num_layers_cov'])
         self.linear_transforms = nn.ModuleList()
         self.activation = getattr(torch, config['activation'])
         for input_size, output_size in zip(self.layer_widths, self.layer_widths[1:]):
@@ -127,7 +128,8 @@ class MixedNet(nn.Module):
 
     def __init__(self, config):
         super().__init__()
-        self.layer_widths = config['mixed_net_widths']
+        # self.layer_widths = config['mixed_net_widths']
+        self.layer_widths = get_mixed_widths(config['width_cov'], config['width_mixed'], config['num_layers_mixed'])
         self.bounded_transforms = nn.ModuleList()
         self.activation = getattr(torch, config['activation'])
         self.mixed_linear = MixedLinear(self.layer_widths[0], self.layer_widths[1])
@@ -151,7 +153,6 @@ class TotalNet(nn.Module):
         self.config = config
         self.cov_net = CovNet(self.config)
         self.mixed_net = MixedNet(self.config)
-
 
     def forward_h(self, x, t):
         x = self.cov_net(x)
@@ -182,7 +183,7 @@ class TotalNet(nn.Module):
         forward_f = self.forward_f_exact if self.config['exact'] else self.forward_f_approx
         S = self.forward_S(x_cens, t_cens)
         f = forward_f(x_obs, t_obs)
-        return S,  f
+        return S, f
 
 
 def get_cov_widths(cov_dim, layer_width_cov, num_layers):
@@ -198,10 +199,35 @@ def get_mixed_widths(layer_width_cov, layer_width_mixed, num_layers):
     return widths
 
 
+def train_sumo_net(config, train, val, checkpoint_dir=None):
+    # Define the network
+    net = TotalNet(config)
+
+    # Get the device
+    device = 'cpu'
+    if torch.cuda.is_available():
+        device = 'cuda:0'
+        if torch.cuda.device_count() > 1:
+            net = nn.DataParallel(net)
+    net.to(device)
+
+    # Set the optimzer
+    optimizer = optim.Adam(net.parameters(), lr=config['lr'])
+
+    # Get the train and val loader
+    train_loader = torch.utils.data.DataLoader(train, batch_size=config['batch_size'], shuffle=True)
+    val_loader = torch.utils.data.DataLoader(val, batch_size=config['batch_size'], shuffle=True)
+
+
+
+
+
 def log_loss(S, f):
     cat = torch.cat((S.flatten(), f.flatten()))
     return - torch.mean(torch.log(cat))
 
+
+cov_dim = {'metabric': 9}
 
 if __name__ == '__main__':
     # Initiate train, test set
@@ -209,12 +235,9 @@ if __name__ == '__main__':
     cov, event_time, event = train_set[1:10]
     print('cov dim', train_set.cov_dim)
     # Define the config file
-    config = {'cov_net_widths': [9, 7, 7],
-              'activation': 'tanh',
-              'mixed_net_widths': [8, 3, 1],
-              'epsilon': 1e-5,
-              'exact': True
-              }
+    config = {'activation': 'tanh', 'epsilon': 1e-5, 'exact': True, 'lr': 0.1, 'num_layers_mixed': 1,
+               'num_layers_cov': 1, 'width_cov': 3, 'width_mixed': 3, 'num_layers_cov': 1, 'data': 'metabric',
+              'batch_size': 128}
 
     # Initiate the net
     # net = CovNet(config)
@@ -237,8 +260,6 @@ if __name__ == '__main__':
     # mixed_net(cov, event_time)
 
     # Initiate the total net
-    config['cov_net_widths'] = get_cov_widths(9, 3, 1)
-    config['mixed_net_widths'] = get_mixed_widths(3, 3, 1)
     total_net = TotalNet(config)
     # print(total_net.forward_h(cov, event_time))
     # print(total_net.forward_S(cov, event_time))
@@ -248,4 +269,3 @@ if __name__ == '__main__':
     print('loss', log_loss(S, f))
     loss = log_loss(S, f)
     loss.backward()
-
