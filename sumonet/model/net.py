@@ -174,14 +174,14 @@ class TotalNet(nn.Module):
 
     def forward_f_exact(self, x, t):
         y = - self.forward_S(x, t)
-        f = torch.autograd.grad(outputs=y, inputs=t, grad_outputs=torch.ones_like(y), create_graph=True)[0]
+        f = torch.autograd.grad(outputs=y, inputs=(x, t), grad_outputs=torch.ones_like(y), create_graph=True,
+                                allow_unused=True)[0]
         return f
 
     def forward(self, x, t, d):
         event_mask = (d == 1).ravel()
         x_obs, t_obs = x[event_mask, :], t[event_mask, :]
         x_cens, t_cens = x[~ event_mask, :], t[~ event_mask, :]
-        t_obs.requires_grad = True
         forward_f = self.forward_f_exact if self.config['exact'] else self.forward_f_approx
         S = self.forward_S(x_cens, t_cens)
         f = forward_f(x_obs, t_obs)
@@ -298,7 +298,7 @@ if __name__ == '__main__':
     torch.autograd.set_detect_anomaly(True)
     # Initiate train, test set
     train, val, test = load_data('metabric')
-    # cov, event_time, event = train[1:10]
+    cov, event_time, event = train[1:10]
     # print('cov dim', train.cov_dim)
     # Define the config file
     config = {'activation': 'tanh', 'epsilon': 1e-6, 'exact': False, 'lr': 0.00001, 'num_layers_mixed': 3,
@@ -326,15 +326,15 @@ if __name__ == '__main__':
     # mixed_net(cov, event_time)
 
     # Initiate the total net
-    # total_net = TotalNet(config)
+    total_net = TotalNet(config)
     # print(total_net.forward_h(cov, event_time))
     # print(total_net.forward_S(cov, event_time))
-    # print('f approx', total_net.forward_f_approx(cov, event_time))
-    # print('f exact', total_net.forward_f_exact(cov, event_time))
+    print('f approx', total_net.forward_f_approx(cov, event_time))
+    print('f exact', total_net.forward_f_exact(cov, event_time))
 
     # S, f = total_net(cov, event_time, event)
     # # print('forward', S, f)
     # # print('loss', log_loss(S, f))
     # loss = log_loss(S, f)
     # loss.backward()
-    train_sumo_net(config, train, val)
+    # train_sumo_net(config, train, val)
