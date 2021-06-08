@@ -142,7 +142,7 @@ class MixedNet(nn.Module):
             self.bounded_transforms.append(BoundedLinear(input_size, output_size))
 
     def forward(self, t, x):
-        y = self.dropout(self.activation(self.mixed_linear(x, t)))
+        y = self.dropout(self.activation(self.mixed_linear(t, x)))
         L = len(self.bounded_transforms)
         for l, bounded_linear in enumerate(self.bounded_transforms):
             if l < L - 1:
@@ -161,7 +161,7 @@ class TotalNet(nn.Module):
 
     def forward_h(self, t, x):
         x = self.cov_net(x)
-        x = self.mixed_net(x, t)
+        x = self.mixed_net(t, x)
         return x
 
     def forward_S(self, t, x):
@@ -169,9 +169,11 @@ class TotalNet(nn.Module):
         return 1 - torch.sigmoid(x)
 
     def forward_f_approx(self, t, x):
+        eps = 1e-6
         h_t = self.forward_h(t, x)
-        h_t_plus = self.forward_h(t + self.config['epsilon'], x)
-        h_derivative_approx = (h_t_plus - h_t) / self.config['epsilon']
+        h_t_plus = self.forward_h(t + eps, x)
+        h_derivative_approx = (h_t_plus - h_t) / eps
+        print(f'h_derivative_approx {h_derivative_approx}')
         f_approx = torch.sigmoid(h_t) * (1 - torch.sigmoid(h_t)) * h_derivative_approx
         return f_approx
 
@@ -311,38 +313,44 @@ if __name__ == '__main__':
     cov, event_time, event = train[1:10]
     # print('cov dim', train.cov_dim)
     # Define the config file
-    config = {'activation': 'tanh', 'epsilon': 1e-6, 'exact': True, 'lr': 1e-2, 'num_layers_mixed': 3,
+    config = {'activation': 'tanh', 'epsilon': 1e-5, 'exact': True, 'lr': 1e-2, 'num_layers_mixed': 3,
                'num_layers_cov': 3, 'width_cov': 32, 'width_mixed': 32, 'num_layers_cov': 3, 'data': 'metabric',
               'batch_size': 128, 'num_epochs': 100, 'dropout': 0.5}
 
-    # Initiate the net
-    net = CovNet(config)
-    # print(net(cov))
-    print(net.linear_transforms)
-
-    # # Initiate the bounded_layer
-    bounded_linear = BoundedLinear(9, 3, 'square')
-    print(bounded_linear(cov))
-    print(bounded_linear.weight)
-
-    # Initiate the mixed layer
-    mixed_linear = MixedLinear(10, 3, 'abs')
-    print(mixed_linear(event_time, cov))
+    # print('cov', cov)
     #
-    # # Initiate the mixed net
+    # # Initiate the net
+    # net = CovNet(config)
+    # print(net(cov))
+    # print(net.linear_transforms)
+    # #
+    # # # # Initiate the bounded_layer
+    # bounded_linear = BoundedLinear(9, 3, 'square')
+    # print(bounded_linear(cov))
+    # print(bounded_linear.weight)
+    # #
+    # # # Initiate the mixed layer
+    # mixed_linear = MixedLinear(10, 3, 'abs')
+    # print(mixed_linear(event_time, cov))
+    # #
+    # # # Initiate the mixed net
+    # config['width_cov'] = 9
     # mixed_net = MixedNet(config)
-    # mixed_net(cov, event_time)
+    # print('layer widths', mixed_net.layer_widths)
+    # print('mixed net', mixed_net(event_time, cov))
+
 
     # Initiate the total net
     # total_net = TotalNet(config)
-    # print(total_net.forward_h(cov, event_time))
-    # print(total_net.forward_S(cov, event_time))
-    # print('f approx', total_net.forward_f_approx(cov, event_time))
-    # print('f exact', total_net.forward_f_exact(cov, event_time))
+    # total_net.eval()
+    # print(total_net.forward_h(event_time, cov))
+    # print(total_net.forward_S(event_time, cov))
+    # print('f approx', total_net.forward_f_approx(event_time, cov))
+    # print('f exact', total_net.forward_f_exact(event_time, cov))
     # print(f'difference {total_net.forward_f_approx(cov, event_time) - total_net.forward_f_exact(cov, event_time)}')
     # S, f = total_net(cov, event_time, event)
     # # print('forward', S, f)
     # # print('loss', log_loss(S, f))
     # loss = log_loss(S, f)
     # loss.backward()
-    # train_sumo_net(config, train, val)
+    train_sumo_net(config, train, val)
