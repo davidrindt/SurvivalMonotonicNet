@@ -88,7 +88,7 @@ class CovNet(nn.Module):
         super().__init__()
         self.config = config
         # self.layer_widths = self.config['cov_net_widths']
-        self.layer_widths = get_cov_widths(cov_dim[config['data']], config['width_cov'], config['num_layers_cov'])
+        self.layer_widths = get_cov_widths(config['cov_dim'], config['width_cov'], config['num_layers_cov'])
         self.linear_transforms = nn.ModuleList()
         self.activation = getattr(torch, config['activation'])
         self.dropout = nn.Dropout(self.config['dropout'])
@@ -96,9 +96,8 @@ class CovNet(nn.Module):
             self.linear_transforms.append(nn.Linear(input_size, output_size))
 
     def forward(self, x):
-        # print('cov', x)
         for linear_transform in self.linear_transforms:
-            x = self.dropout(self.activation(linear_transform(x)))
+            x = self.dropout(get_batch_norm(self.activation(linear_transform(x)), self.config['batch_norm']))
         return x
 
 
@@ -133,6 +132,7 @@ class MixedNet(nn.Module):
     def __init__(self, config):
         super().__init__()
         # self.layer_widths = config['mixed_net_widths']
+        self.config = config
         self.layer_widths = get_mixed_widths(config['width_cov'], config['width_mixed'], config['num_layers_mixed'])
         self.bounded_transforms = nn.ModuleList()
         self.activation = getattr(torch, config['activation'])
@@ -142,11 +142,12 @@ class MixedNet(nn.Module):
             self.bounded_transforms.append(BoundedLinear(input_size, output_size))
 
     def forward(self, t, x):
-        y = self.dropout(self.activation(self.mixed_linear(t, x)))
+        y = self.dropout(get_batch_norm(self.activation(self.mixed_linear(t, x)), self.config['batch_norm']))
+
         L = len(self.bounded_transforms)
         for l, bounded_linear in enumerate(self.bounded_transforms):
             if l < L - 1:
-                y = self.dropout(self.activation(bounded_linear(y)))
+                y = self.dropout(get_batch_norm(self.activation(bounded_linear(y)), self.config['batch_norm']))
             else:
                 y = bounded_linear(y)
         return y
@@ -173,7 +174,6 @@ class TotalNet(nn.Module):
         h_t = self.forward_h(t, x)
         h_t_plus = self.forward_h(t + eps, x)
         h_derivative_approx = (h_t_plus - h_t) / eps
-        print(f'h_derivative_approx {h_derivative_approx}')
         f_approx = torch.sigmoid(h_t) * (1 - torch.sigmoid(h_t)) * h_derivative_approx
         return f_approx
 
@@ -192,6 +192,14 @@ class TotalNet(nn.Module):
         f = forward_f(t_obs, x_obs)
         return S,  f
 
+def get_batch_norm(x, batch_norm):
+    if batch_norm:
+        bn = nn.BatchNorm1d(x.shape[1])
+        result = bn(x)
+        # print('result', result)
+        return result
+    else:
+        return x
 
 def get_cov_widths(cov_dim, layer_width_cov, num_layers):
     widths = [layer_width_cov for _ in range(num_layers + 1)]
@@ -237,7 +245,7 @@ def train_sumo_net(config, train, val, checkpoint_dir='checkpoints'):
     net.to(device)
 
     # Set the optimizer
-    optimizer = optim.Adam(net.parameters(), lr=config['lr'])
+    optimizer = optim.Adam(net.parameters(), lr=config['lr'], weight_decay=config['weight_decay'])
 
     # Get the train and val loader
     train_loader = torch.utils.data.DataLoader(train, batch_size=config['batch_size'], shuffle=True)
@@ -310,15 +318,21 @@ if __name__ == '__main__':
     torch.autograd.set_detect_anomaly(True)
     # Initiate train, test set
     train, val, test = load_data('metabric')
-    cov, event_time, event = train[1:10]
+    cov, event_time, event = train[1:4]
     # print('cov dim', train.cov_dim)
     # Define the config file
     config = {'activation': 'tanh', 'epsilon': 1e-5, 'exact': True, 'lr': 1e-2, 'num_layers_mixed': 3,
                'num_layers_cov': 3, 'width_cov': 32, 'width_mixed': 32, 'num_layers_cov': 3, 'data': 'metabric',
-              'batch_size': 128, 'num_epochs': 100, 'dropout': 0.5}
+              'cov_dim': cov_dim['metabric'], 'batch_size': 128, 'num_epochs': 100, 'dropout': 0.5,
+              'weight_decay': 1e-4, 'batch_norm': False}
 
     # print('cov', cov)
-    #
+    # print(cov.mean(axis=0))
+    # batch_norm = nn.BatchNorm1d(9)
+    # bn_cov = batch_norm(cov)
+    # print('bn cov', bn_cov)
+
+
     # # Initiate the net
     # net = CovNet(config)
     # print(net(cov))
