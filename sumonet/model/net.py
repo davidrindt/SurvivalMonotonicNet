@@ -91,6 +91,7 @@ class CovNet(nn.Module):
         self.layer_widths = get_cov_widths(cov_dim[config['data']], config['width_cov'], config['num_layers_cov'])
         self.linear_transforms = nn.ModuleList()
         self.activation = getattr(torch, config['activation'])
+        self.dropout = nn.Dropout(self.config['dropout'])
         for input_size, output_size in zip(self.layer_widths, self.layer_widths[1:]):
             self.linear_transforms.append(nn.Linear(input_size, output_size))
 
@@ -98,13 +99,15 @@ class CovNet(nn.Module):
         # print('cov', x)
         for linear_transform in self.linear_transforms:
             x = self.activation(linear_transform(x))
+            self.dropout(x)
         return x
 
 
 class BoundedLinear(nn.Linear):
-    def __init__(self, input_size, output_size, bounding_operation_name='abs'):
+    def __init__(self, input_size, output_size, bounding_operation_name='abs', dropout=0.9):
         super().__init__(input_size, output_size)
         self.bounding_operation = getattr(torch, bounding_operation_name)
+        self.dropout = nn.Dropout(dropout)
         # self.bounded_weight = self.bounding_operation(self.weight)
 
     def forward(self, x):
@@ -135,6 +138,7 @@ class MixedNet(nn.Module):
         self.bounded_transforms = nn.ModuleList()
         self.activation = getattr(torch, config['activation'])
         self.mixed_linear = MixedLinear(self.layer_widths[0], self.layer_widths[1])
+        self.dropout = nn.Dropout(config['dropout'])
         for input_size, output_size in zip(self.layer_widths[1:], self.layer_widths[2:]):
             self.bounded_transforms.append(BoundedLinear(input_size, output_size))
 
@@ -143,7 +147,7 @@ class MixedNet(nn.Module):
         L = len(self.bounded_transforms)
         for l, bounded_linear in enumerate(self.bounded_transforms):
             if l < L - 1:
-                y = self.activation(bounded_linear(y))
+                y = self.dropout(self.activation(bounded_linear(y)))
             else:
                 y = bounded_linear(y)
         return y
@@ -213,7 +217,13 @@ def log_loss_sum(S, f):
     return - torch.sum(torch.log(cat + eps))
 
 
-def train_sumo_net(config, train, val, checkpoint_dir=None):
+def train_sumo_net(config, train, val, checkpoint_dir='checkpoints'):
+
+    # Define the checkpoint path
+    path = os.path.join(checkpoint_dir, 'checkpoint')
+    if not os.path.exists(path):
+        os.makedirs(checkpoint_dir)
+
     # Define the network
     net = TotalNet(config)
 
@@ -225,7 +235,7 @@ def train_sumo_net(config, train, val, checkpoint_dir=None):
             net = nn.DataParallel(net)
     net.to(device)
 
-    # Set the optimzer
+    # Set the optimizer
     optimizer = optim.Adam(net.parameters(), lr=config['lr'])
 
     # Get the train and val loader
@@ -233,10 +243,11 @@ def train_sumo_net(config, train, val, checkpoint_dir=None):
     val_loader = torch.utils.data.DataLoader(val, batch_size=config['batch_size'], shuffle=True)
     best_val_loss = np.inf
 
+    # Define the train loop
     for epoch in range(config['num_epochs']):
-        print(f'epoch {epoch}')
         running_loss, epoch_steps = 0.0, 0
 
+        net.train()
         for data in train_loader:
 
             # Get the data
@@ -249,7 +260,6 @@ def train_sumo_net(config, train, val, checkpoint_dir=None):
             # Compute probabilities, likelihood, gradients, and take step
             S, f = net(event_time, cov, event)
             loss = log_loss_mean(S, f)
-            print('lossss', loss)
             loss.backward()
             optimizer.step()
 
@@ -259,9 +269,11 @@ def train_sumo_net(config, train, val, checkpoint_dir=None):
             # if epoch_steps % 50 == 0:
             #     print(f'epoch {epoch} epoch_steps {epoch_steps} loss {running_loss / epoch_steps}')
 
-        # Validation loss
+
+        # Get the validation loss
         val_loss, val_steps = 0, 0
 
+        net.eval()
         for data in val_loader:
 
             # Get the data
@@ -275,14 +287,12 @@ def train_sumo_net(config, train, val, checkpoint_dir=None):
             S, f = net(event_time, cov, event)
             val_loss += log_loss_sum(S, f)
 
-        print(f'len val {len(val)}')
-        print(f'epoch {epoch} val loss {val_loss / len(val)}')
+        print(f'epoch {epoch} val loss {val_loss / len(val)} train loss {loss}')
 
-        # Save the model
-        # checkpoint_path = os.path.join(checkpoint_dir, 'checkpoint')
-        # if val_loss < best_val_loss:
-        #     best_val_loss = val_loss
-        #     torch.save((net.state_dict(), optimizer.state_dict()), checkpoint_path)
+        if val_loss < best_val_loss:
+            print(f'\n -- best val loss {val_loss/ len(val)} -- \n')
+            best_val_loss = val_loss
+            torch.save((net.state_dict(), optimizer.state_dict()), path)
 
 
     print('finished training')
@@ -304,7 +314,7 @@ if __name__ == '__main__':
     # Define the config file
     config = {'activation': 'tanh', 'epsilon': 1e-6, 'exact': True, 'lr': 1e-2, 'num_layers_mixed': 3,
                'num_layers_cov': 3, 'width_cov': 32, 'width_mixed': 32, 'num_layers_cov': 3, 'data': 'metabric',
-              'batch_size': 100000, 'num_epochs':100}
+              'batch_size': 128, 'num_epochs': 100, 'dropout': 0.2}
 
     # Initiate the net
     # net = CovNet(config)
@@ -338,4 +348,4 @@ if __name__ == '__main__':
     # # print('loss', log_loss(S, f))
     # loss = log_loss(S, f)
     # loss.backward()
-    train_sumo_net(config, train, val)
+    # train_sumo_net(config, train, val)
