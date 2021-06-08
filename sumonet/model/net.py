@@ -98,8 +98,7 @@ class CovNet(nn.Module):
     def forward(self, x):
         # print('cov', x)
         for linear_transform in self.linear_transforms:
-            x = self.activation(linear_transform(x))
-            self.dropout(x)
+            x = self.dropout(self.activation(linear_transform(x)))
         return x
 
 
@@ -309,28 +308,26 @@ if __name__ == '__main__':
     torch.autograd.set_detect_anomaly(True)
     # Initiate train, test set
     train, val, test = load_data('metabric')
-    # cov, event_time, event = train[1:10]
+    cov, event_time, event = train[1:10]
     # print('cov dim', train.cov_dim)
     # Define the config file
     config = {'activation': 'tanh', 'epsilon': 1e-6, 'exact': True, 'lr': 1e-2, 'num_layers_mixed': 3,
                'num_layers_cov': 3, 'width_cov': 32, 'width_mixed': 32, 'num_layers_cov': 3, 'data': 'metabric',
-              'batch_size': 128, 'num_epochs': 100, 'dropout': 0.2}
+              'batch_size': 128, 'num_epochs': 100, 'dropout': 0.5}
 
     # Initiate the net
-    # net = CovNet(config)
+    net = CovNet(config)
     # print(net(cov))
-    # print(net.linear_transforms)
-    #
+    print(net.linear_transforms)
+
     # # Initiate the bounded_layer
-    # bounded_linear = BoundedLinear(9, 3, 'square')
-    # print(bounded_linear(cov))
-    #
-    # print(bounded_linear.weight)
-    # print(bounded_linear.bounded_weight)
-    #
-    # # Initiate the mixed layer
-    # mixed_linear = MixedLinear(10, 3, 'abs')
-    # print(mixed_linear(cov, event_time))
+    bounded_linear = BoundedLinear(9, 3, 'square')
+    print(bounded_linear(cov))
+    print(bounded_linear.weight)
+
+    # Initiate the mixed layer
+    mixed_linear = MixedLinear(10, 3, 'abs')
+    print(mixed_linear(event_time, cov))
     #
     # # Initiate the mixed net
     # mixed_net = MixedNet(config)
