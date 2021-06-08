@@ -118,7 +118,7 @@ class MixedLinear(nn.Module):
         self.bounded_linear = BoundedLinear(1, output_size, bounding_operation_name)
         self.linear = nn.Linear(input_size - 1, output_size, bias=False)
 
-    def forward(self, x, t):
+    def forward(self, t, x):
         return self.bounded_linear(t) + self.linear(x)
 
 
@@ -138,7 +138,7 @@ class MixedNet(nn.Module):
         for input_size, output_size in zip(self.layer_widths[1:], self.layer_widths[2:]):
             self.bounded_transforms.append(BoundedLinear(input_size, output_size))
 
-    def forward(self, x, t):
+    def forward(self, t, x):
         y = self.activation(self.mixed_linear(x, t))
         L = len(self.bounded_transforms)
         for l, bounded_linear in enumerate(self.bounded_transforms):
@@ -156,36 +156,35 @@ class TotalNet(nn.Module):
         self.cov_net = CovNet(self.config)
         self.mixed_net = MixedNet(self.config)
 
-    def forward_h(self, x, t):
+    def forward_h(self, t, x):
         x = self.cov_net(x)
         x = self.mixed_net(x, t)
         return x
 
-    def forward_S(self, x, t):
-        x = self.forward_h(x, t)
+    def forward_S(self, t, x):
+        x = self.forward_h(t, x)
         return 1 - torch.sigmoid(x)
 
-    def forward_f_approx(self, x, t):
-        h_t = self.forward_h(x, t)
-        h_t_plus = self.forward_h(x, t + self.config['epsilon'])
+    def forward_f_approx(self, t, x):
+        h_t = self.forward_h(t, x)
+        h_t_plus = self.forward_h(t + self.config['epsilon'], x)
         h_derivative_approx = (h_t_plus - h_t) / self.config['epsilon']
         f_approx = torch.sigmoid(h_t) * (1 - torch.sigmoid(h_t)) * h_derivative_approx
         return f_approx
 
-    def forward_f_exact(self, x, t):
+    def forward_f_exact(self, t, x):
         t.requires_grad = True
-        y = - self.forward_S(x, t)
-        f = torch.autograd.grad(outputs=y, inputs=t, grad_outputs=torch.ones_like(y), create_graph=True,
-                                allow_unused=True)[0]
-        return f
+        y = self.forward_S(t, x)
+        f, = torch.autograd.grad(outputs=y, inputs=t, grad_outputs=torch.ones_like(y), create_graph=True)
+        return - f
 
-    def forward(self, x, t, d):
+    def forward(self, t, x, d):
         event_mask = (d == 1).ravel()
         x_obs, t_obs = x[event_mask, :], t[event_mask, :]
         x_cens, t_cens = x[~ event_mask, :], t[~ event_mask, :]
         forward_f = self.forward_f_exact if self.config['exact'] else self.forward_f_approx
-        S = self.forward_S(x_cens, t_cens)
-        f = forward_f(x_obs, t_obs)
+        S = self.forward_S(t_cens, x_cens)
+        f = forward_f(t_obs, x_obs)
         return S,  f
 
 
@@ -242,14 +241,13 @@ def train_sumo_net(config, train, val, checkpoint_dir=None):
 
             # Get the data
             cov, event_time, event = data
-            cov, event_time, event = cov.to(device), event_time.to(device), event.to(device)
-
+            # cov, event_time, event = cov.to(device), event_time.to(device), event.to(device)
 
             # Zero the gradient
             optimizer.zero_grad()
 
             # Compute probabilities, likelihood, gradients, and take step
-            S, f = net(cov, event_time, event)
+            S, f = net(event_time, cov, event)
             loss = log_loss_mean(S, f)
             print('lossss', loss)
             loss.backward()
@@ -258,24 +256,26 @@ def train_sumo_net(config, train, val, checkpoint_dir=None):
             # Track the loss
             running_loss += loss.item()
             epoch_steps += 1
-            print('epoch steps', epoch_steps)
-            if epoch_steps % 50 == 0:
-                print(f'epoch {epoch} epoch_steps {epoch_steps} loss {running_loss / epoch_steps}')
+            # if epoch_steps % 50 == 0:
+            #     print(f'epoch {epoch} epoch_steps {epoch_steps} loss {running_loss / epoch_steps}')
 
         # Validation loss
         val_loss, val_steps = 0, 0
 
         for data in val_loader:
-            with torch.no_grad():
 
-                # Get the data
-                cov, event_time, event = data
-                cov, event_time, event = cov.to(device), event_time.to(device), event.to(device)
+            # Get the data
+            cov, event_time, event = data
+            # cov, event_time, event = cov.to(device), event_time.to(device), event.to(device)
 
-                # Compute probabilities and the loss
-                S, f = net(cov, event_time, event)
-                val_loss += log_loss_sum(S, f)
+            # Zero the gradient
+            optimizer.zero_grad()
 
+            # Compute probabilities and the loss
+            S, f = net(event_time, cov, event)
+            val_loss += log_loss_sum(S, f)
+
+        print(f'len val {len(val)}')
         print(f'epoch {epoch} val loss {val_loss / len(val)}')
 
         # Save the model
@@ -299,12 +299,12 @@ if __name__ == '__main__':
     torch.autograd.set_detect_anomaly(True)
     # Initiate train, test set
     train, val, test = load_data('metabric')
-    cov, event_time, event = train[1:10]
+    # cov, event_time, event = train[1:10]
     # print('cov dim', train.cov_dim)
     # Define the config file
-    config = {'activation': 'tanh', 'epsilon': 1e-6, 'exact': False, 'lr': 0.00001, 'num_layers_mixed': 3,
+    config = {'activation': 'tanh', 'epsilon': 1e-6, 'exact': True, 'lr': 1e-2, 'num_layers_mixed': 3,
                'num_layers_cov': 3, 'width_cov': 32, 'width_mixed': 32, 'num_layers_cov': 3, 'data': 'metabric',
-              'batch_size': 10024, 'num_epochs':100}
+              'batch_size': 100000, 'num_epochs':100}
 
     # Initiate the net
     # net = CovNet(config)
@@ -327,15 +327,15 @@ if __name__ == '__main__':
     # mixed_net(cov, event_time)
 
     # Initiate the total net
-    total_net = TotalNet(config)
+    # total_net = TotalNet(config)
     # print(total_net.forward_h(cov, event_time))
     # print(total_net.forward_S(cov, event_time))
-    print('f approx', total_net.forward_f_approx(cov, event_time))
-    print('f exact', total_net.forward_f_exact(cov, event_time))
+    # print('f approx', total_net.forward_f_approx(cov, event_time))
+    # print('f exact', total_net.forward_f_exact(cov, event_time))
     # print(f'difference {total_net.forward_f_approx(cov, event_time) - total_net.forward_f_exact(cov, event_time)}')
     # S, f = total_net(cov, event_time, event)
     # # print('forward', S, f)
     # # print('loss', log_loss(S, f))
     # loss = log_loss(S, f)
     # loss.backward()
-    # train_sumo_net(config, train, val)
+    train_sumo_net(config, train, val)
