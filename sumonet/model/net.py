@@ -143,7 +143,7 @@ class MixedNet(nn.Module):
             self.bounded_transforms.append(BoundedLinear(input_size, output_size))
 
     def forward(self, t, x):
-        y = self.activation(self.mixed_linear(x, t))
+        y = self.dropout(self.activation(self.mixed_linear(x, t)))
         L = len(self.bounded_transforms)
         for l, bounded_linear in enumerate(self.bounded_transforms):
             if l < L - 1:
