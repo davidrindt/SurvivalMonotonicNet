@@ -173,8 +173,9 @@ class TotalNet(nn.Module):
         return f_approx
 
     def forward_f_exact(self, x, t):
+        t.requires_grad = True
         y = - self.forward_S(x, t)
-        f = torch.autograd.grad(outputs=y, inputs=(x, t), grad_outputs=torch.ones_like(y), create_graph=True,
+        f = torch.autograd.grad(outputs=y, inputs=t, grad_outputs=torch.ones_like(y), create_graph=True,
                                 allow_unused=True)[0]
         return f
 
@@ -331,7 +332,7 @@ if __name__ == '__main__':
     # print(total_net.forward_S(cov, event_time))
     print('f approx', total_net.forward_f_approx(cov, event_time))
     print('f exact', total_net.forward_f_exact(cov, event_time))
-
+    # print(f'difference {total_net.forward_f_approx(cov, event_time) - total_net.forward_f_exact(cov, event_time)}')
     # S, f = total_net(cov, event_time, event)
     # # print('forward', S, f)
     # # print('loss', log_loss(S, f))
