@@ -89,7 +89,7 @@ class CovNet(nn.Module):
         super().__init__()
         self.config = config
         # self.layer_widths = self.config['cov_net_widths']
-        self.layer_widths = get_cov_widths(config['cov_dim'], config['width_cov'], config['num_layers_cov'])
+        self.layer_widths = get_cov_widths(cov_dim[config['data']], config['width_cov'], config['num_layers_cov'])
         self.linear_transforms = nn.ModuleList()
         self.activation = getattr(torch, config['activation'])
         self.dropout = nn.Dropout(self.config['dropout'])
@@ -300,7 +300,7 @@ def train_sumo_net(config, train, val, checkpoint_dir='checkpoints'):
         # print(f'epoch {epoch} val loss {val_loss / len(val)} train loss {loss}')
 
         if val_loss < best_val_loss:
-            print(f' --epoch {epoch} best val loss {val_loss/ len(val)} -- ')
+            print(f'epoch {epoch} best val loss {val_loss/ len(val)}')
             best_val_loss = val_loss
             torch.save((net.state_dict(), optimizer.state_dict()), path)
 
@@ -324,7 +324,7 @@ if __name__ == '__main__':
     # Define the config file
     config = {'activation': 'tanh', 'epsilon': 1e-5, 'exact': True, 'lr': 1e-2, 'num_layers_mixed': 3,
                'num_layers_cov': 3, 'width_cov': 32, 'width_mixed': 32, 'num_layers_cov': 3, 'data': 'metabric',
-              'cov_dim': cov_dim['metabric'], 'batch_size': 128, 'num_epochs': 100, 'dropout': 0.5,
+              'batch_size': 128, 'num_epochs': 100, 'dropout': 0.5,
               'weight_decay': 1e-4, 'batch_norm': False}
 
     # print('cov', cov)
