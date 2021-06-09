@@ -17,6 +17,7 @@ from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from torchvision.transforms import ToTensor
 from sklearn.model_selection import train_test_split
 import sklearn
+from tqdm import tqdm
 
 seed = 2
 torch.manual_seed(seed)
@@ -296,10 +297,10 @@ def train_sumo_net(config, train, val, checkpoint_dir='checkpoints'):
             S, f = net(event_time, cov, event)
             val_loss += log_loss_sum(S, f)
 
-        print(f'epoch {epoch} val loss {val_loss / len(val)} train loss {loss}')
+        # print(f'epoch {epoch} val loss {val_loss / len(val)} train loss {loss}')
 
         if val_loss < best_val_loss:
-            print(f'\n -- best val loss {val_loss/ len(val)} -- \n')
+            print(f' --epoch {epoch} best val loss {val_loss/ len(val)} -- ')
             best_val_loss = val_loss
             torch.save((net.state_dict(), optimizer.state_dict()), path)
 
