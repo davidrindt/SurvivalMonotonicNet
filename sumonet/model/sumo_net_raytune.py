@@ -1,4 +1,4 @@
-from sumonet.model.net_copy import train_sumo_net, load_data, TotalNet
+from sumonet.model.net import train_sumo_net, load_data, TotalNet
 from ray import tune
 from ray.tune import CLIReporter
 from ray.tune.schedulers import ASHAScheduler

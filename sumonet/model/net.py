@@ -43,8 +43,6 @@ def load_data(dataset):
     # Split the dataset
     train, val, test = np.split(df.sample(frac=1), [int(.6 * len(df)), int(.8 * len(df))])
     train, val, test = SurvivalDataset(train), SurvivalDataset(val), SurvivalDataset(test)
-    print('HERE HERE', len(train), len(val), len(test))
-    print(train, val, test)
     return train, val, test
 
 
@@ -228,38 +226,32 @@ def log_loss_sum(S, f):
     return - torch.sum(torch.log(cat + eps))
 
 
-def train_sumo_net(config):
+
+def train_sumo_net(config, train, val, tuning=False):
+
+    # Define the network
     net = TotalNet(config)
 
-    # Get the device
-    device = 'cpu'
+    device = "cpu"
     if torch.cuda.is_available():
-        device = 'cuda:0'
+        device = "cuda:0"
         if torch.cuda.device_count() > 1:
             net = nn.DataParallel(net)
     net.to(device)
 
-    print('here')
-    train, val, test = load_data(config['data'])
-    train, val, test = train.to(device), val.to(device), test.to(device)
-
-    print('AAAAAA')
-
-    # Set the optimizer
+    # Set the criterion and optimizer
     optimizer = optim.Adam(net.parameters(), lr=config['lr'], weight_decay=config['weight_decay'])
 
-    # Get the train and val loader
-    train_loader = torch.utils.data.DataLoader(train, batch_size=config['batch_size'], shuffle=True)
-    val_loader = torch.utils.data.DataLoader(val, batch_size=config['batch_size'], shuffle=True)
+
+    # Load the datasets
+    trainloader = torch.utils.data.DataLoader(train, batch_size=config['batch_size'], shuffle=True)
+    valloader = torch.utils.data.DataLoader(val, batch_size=config['batch_size'], shuffle=True)
     best_val_loss = np.inf
 
-    print('CCCCCC')
-    # Define the train loop
     for epoch in range(config['num_epochs']):
-        running_loss, epoch_steps = 0.0, 0
-
-        net.train()
-        for data in train_loader:
+        running_loss = 0.0
+        epoch_steps = 0
+        for i, data in enumerate(trainloader):
 
             # Get the data
             cov, event_time, event = data
@@ -268,7 +260,7 @@ def train_sumo_net(config):
             # Zero the gradient
             optimizer.zero_grad()
 
-            # Compute probabilities, likelihood, gradients, and take step
+            # Compute loss, gradients, and take step
             S, f = net(event_time, cov, event)
             loss = log_loss_mean(S, f)
             loss.backward()
@@ -277,16 +269,17 @@ def train_sumo_net(config):
             # Track the loss
             running_loss += loss.item()
             epoch_steps += 1
-            # if epoch_steps % 50 == 0:
-            #     print(f'epoch {epoch} epoch_steps {epoch_steps} loss {running_loss / epoch_steps}')
+            if i % 2000 == 1999:
+                print('[%d, %5d] loss: %.3f' % (epoch + 1, i + 1, running_loss / (epoch_steps + 1)))
+                running_loss = 0
+                epoch_steps = 0
 
+        # Validation loss
+        val_loss = 0.0
+        val_steps = 0
 
-        # Get the validation loss
-        val_loss, val_steps = 0, 0
-
-        net.eval()
-        for data in val_loader:
-
+        # Loop over valloader
+        for i, data in enumerate(valloader):
             # Get the data
             cov, event_time, event = data
             cov, event_time, event = cov.to(device), event_time.to(device), event.to(device)
@@ -294,135 +287,40 @@ def train_sumo_net(config):
             # Zero the gradient
             optimizer.zero_grad()
 
-            # Compute probabilities and the loss
+            # Compute the percentage correct
             S, f = net(event_time, cov, event)
-            val_loss += log_loss_sum(S, f).cpu().detach().numpy()
+            loss = log_loss_mean(S, f)
 
-        # print(f'epoch {epoch} val loss {val_loss / len(val)} train loss {loss}')
+            val_loss += loss.cpu().detach().numpy()
+            val_steps += 1
 
         if val_loss < best_val_loss:
-            print(f'epoch {epoch} train loss {running_loss / epoch_steps} best val loss {val_loss/ len(val)}')
+            print(f'new best val loss {val_loss}')
             best_val_loss = val_loss
-            # torch.save((net.state_dict(), optimizer.state_dict()), path)
 
+        if tuning:
+            with tune.checkpoint_dir(epoch) as checkpoint_dir:
+                path = os.path.join(checkpoint_dir, "checkpoint")
+                torch.save((net.state_dict(), optimizer.state_dict()), path)
+            tune.report(loss=(val_loss / val_steps))
 
-        with tune.checkpoint_dir(epoch) as checkpoint_dir:
-            path = os.path.join(checkpoint_dir, "checkpoint")
-            torch.save((net.state_dict(), optimizer.state_dict()), path)
+    print('Finished training')
 
-        tune.report(loss=val_loss)
-
-    print('finished training')
-
-
-
-def hyperopt_run(hyperconfig, num_samples=2, max_num_epochs=100, gpus_per_trial=2):
-    checkpoint_dir = 'checkpoints'
-    config =  hyperconfig
-    scheduler = ASHAScheduler(
-        metric="loss",
-        mode="min",
-        max_t=max_num_epochs,
-        grace_period=1,
-        reduction_factor=2)
-
-    reporter = CLIReporter(
-        parameter_columns=["dropout"],
-        metric_columns=["loss", "training_iteration"])
-
-    result = tune.run(
-        partial(train_sumo_net),
-        resources_per_trial={"cpu": 1},
-        config=config,
-        num_samples=num_samples,
-        scheduler=scheduler,
-        progress_reporter=reporter)
-
-
-    best_trial = result.get_best_trial("loss", "min", "last")
-    print("Best trial config: {}".format(best_trial.config))
-    print("Best trial final validation loss: {}".format(
-        best_trial.last_result["loss"]))
-    print("Best trial final validation accuracy: {}".format(
-        best_trial.last_result["accuracy"]))
-
-    best_trained_model = TotalNet(best_trial.config)
-    print(f'Best trained model state dict {best_trained_model.state_dict()}')
 
 
 
 
 if __name__ == '__main__':
     torch.autograd.set_detect_anomaly(True)
+
     # Initiate train, test set
     train, val, test = load_data('metabric')
     cov, event_time, event = train[1:4]
-    # print('cov dim', train.cov_dim)
+
     # Define the config file
     config = {'activation': 'tanh', 'epsilon': 1e-5, 'exact': True, 'lr': 1e-2, 'num_layers_mixed': 3,
                'num_layers_cov': 3, 'width_cov': 32, 'width_mixed': 32, 'num_layers_cov': 3, 'data': 'metabric', 'cov_dim':9,
               'batch_size': 128, 'num_epochs': 100, 'dropout': 0.5,
               'weight_decay': 1e-4, 'batch_norm': False}
 
-    # print('cov', cov)
-    # print(cov.mean(axis=0))
-    # batch_norm = nn.BatchNorm1d(9)
-    # bn_cov = batch_norm(cov)
-    # print('bn cov', bn_cov)
-
-
-    # # Initiate the net
-    # net = CovNet(config)
-    # print(net(cov))
-    # print(net.linear_transforms)
-    # #
-    # # # # Initiate the bounded_layer
-    # bounded_linear = BoundedLinear(9, 3, 'square')
-    # print(bounded_linear(cov))
-    # print(bounded_linear.weight)
-    # #
-    # # # Initiate the mixed layer
-    # mixed_linear = MixedLinear(10, 3, 'abs')
-    # print(mixed_linear(event_time, cov))
-    # #
-    # # # Initiate the mixed net
-    # config['width_cov'] = 9
-    # mixed_net = MixedNet(config)
-    # print('layer widths', mixed_net.layer_widths)
-    # print('mixed net', mixed_net(event_time, cov))
-
-
-    # Initiate the total net
-    # total_net = TotalNet(config)
-    # total_net.eval()
-    # print(total_net.forward_h(event_time, cov))
-    # print(total_net.forward_S(event_time, cov))
-    # print('f approx', total_net.forward_f_approx(event_time, cov))
-    # print('f exact', total_net.forward_f_exact(event_time, cov))
-    # print(f'difference {total_net.forward_f_approx(cov, event_time) - total_net.forward_f_exact(cov, event_time)}')
-    # S, f = total_net(cov, event_time, event)
-    # # print('forward', S, f)
-    # # print('loss', log_loss(S, f))
-    # loss = log_loss(S, f)
-    # loss.backward()
-    train_sumo_net(config)
-
-
-
-    # hyperconfig = dict(activation='tanh',
-    #                    epsilon=1e-5,
-    #                    exact=True,
-    #                    lr=tune.choice([0.01, 0.001]),
-    #                    num_layers_mixed=tune.choice([3]),
-    #                    num_layers_cov=tune.choice([1, 3]),
-    #                    width_cov=tune.choice([4, 8]),
-    #                    width_mixed=tune.choice([4]),
-    #                    data='metabric',
-    #                    cov_dim=9,
-    #                    batch_size=tune.choice([32, 64, 128]),
-    #                    num_epochs=100,
-    #                    dropout=tune.choice([0., 0.2, 0.5]),
-    #                    weight_decay=tune.choice([0, 1e-4, 1e-3]),
-    #                    batch_norm=False)
-    #
-    # hyperopt_run(hyperconfig=hyperconfig)
+    train_sumo_net(config, train, val)
