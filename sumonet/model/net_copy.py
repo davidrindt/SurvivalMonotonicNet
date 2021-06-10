@@ -227,7 +227,8 @@ def log_loss_sum(S, f):
 
 
 
-def train_sumo_net(config, train, val, checkpoint_dir=None, data_dir=None):
+def train_sumo_net(config, train, val, tuning=False):
+
     # Define the network
     net = TotalNet(config)
 
@@ -241,20 +242,13 @@ def train_sumo_net(config, train, val, checkpoint_dir=None, data_dir=None):
     # Set the criterion and optimizer
     optimizer = optim.Adam(net.parameters(), lr=config['lr'], weight_decay=config['weight_decay'])
 
-    # Check if there is a checkpoint
-    # if checkpoint_dir:
-    #     model_state, optimizer_state = torch.load(os.path.join(checkpoint_dir, 'checkpoint'))
-    #     net.load_state_dict(model_state)
-    #     optimizer.load_state_dict(optimizer_state)
 
     # Load the datasets
     trainloader = torch.utils.data.DataLoader(train, batch_size=config['batch_size'], shuffle=True)
     valloader = torch.utils.data.DataLoader(val, batch_size=config['batch_size'], shuffle=True)
     best_val_loss = np.inf
 
-    print('num epochs', config['num_epochs'])
     for epoch in range(config['num_epochs']):
-        print(f'epoch {epoch}')
         running_loss = 0.0
         epoch_steps = 0
         for i, data in enumerate(trainloader):
@@ -267,11 +261,6 @@ def train_sumo_net(config, train, val, checkpoint_dir=None, data_dir=None):
             optimizer.zero_grad()
 
             # Compute loss, gradients, and take step
-            #             # Compute probabilities, likelihood, gradients, and take step
-            #             S, f = net(event_time, cov, event)
-            #             loss = log_loss_mean(S, f)
-            #             loss.backward()
-            #             optimizer.step()
             S, f = net(event_time, cov, event)
             loss = log_loss_mean(S, f)
             loss.backward()
@@ -288,8 +277,6 @@ def train_sumo_net(config, train, val, checkpoint_dir=None, data_dir=None):
         # Validation loss
         val_loss = 0.0
         val_steps = 0
-        # total = 0
-        correct = 0
 
         # Loop over valloader
         for i, data in enumerate(valloader):
@@ -306,54 +293,18 @@ def train_sumo_net(config, train, val, checkpoint_dir=None, data_dir=None):
 
             val_loss += loss.cpu().detach().numpy()
             val_steps += 1
-        print(f'val loss {val_loss}')
-        # print(f'val accuracy {correct / total}')
-        correct=1
+
         if val_loss < best_val_loss:
             print(f'new best val loss {val_loss}')
             best_val_loss = val_loss
+        if tuning:
+            with tune.checkpoint_dir(epoch) as checkpoint_dir:
+                path = os.path.join(checkpoint_dir, "checkpoint")
+                torch.save((net.state_dict(), optimizer.state_dict()), path)
 
-        with tune.checkpoint_dir(epoch) as checkpoint_dir:
-            path = os.path.join(checkpoint_dir, "checkpoint")
-            torch.save((net.state_dict(), optimizer.state_dict()), path)
-
-        tune.report(loss=(val_loss / val_steps))
+            tune.report(loss=(val_loss / val_steps))
     print('Finished training')
 
-
-
-def hyperopt_run(hyperconfig, num_samples=2, max_num_epochs=100, gpus_per_trial=2):
-    checkpoint_dir = 'checkpoints'
-    config =  hyperconfig
-    scheduler = ASHAScheduler(
-        metric="loss",
-        mode="min",
-        max_t=max_num_epochs,
-        grace_period=1,
-        reduction_factor=2)
-
-    reporter = CLIReporter(
-        parameter_columns=["dropout"],
-        metric_columns=["loss", "training_iteration"])
-
-    result = tune.run(
-        partial(train_sumo_net),
-        resources_per_trial={"cpu": 1},
-        config=config,
-        num_samples=num_samples,
-        scheduler=scheduler,
-        progress_reporter=reporter)
-
-
-    best_trial = result.get_best_trial("loss", "min", "last")
-    print("Best trial config: {}".format(best_trial.config))
-    print("Best trial final validation loss: {}".format(
-        best_trial.last_result["loss"]))
-    print("Best trial final validation accuracy: {}".format(
-        best_trial.last_result["accuracy"]))
-
-    best_trained_model = TotalNet(best_trial.config)
-    print(f'Best trained model state dict {best_trained_model.state_dict()}')
 
 
 

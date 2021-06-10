@@ -8,9 +8,7 @@ import torch
 import numpy as np
 
 
-def main(config, num_samples=100, gpus_per_trial=0):
-    data_dir = os.path.abspath('./data')
-    checkpoint_dir = 'checkpoint_dir'
+def main(config, num_samples=6, gpus_per_trial=0):
 
     train, val, test = load_data('metabric')
 
@@ -23,13 +21,12 @@ def main(config, num_samples=100, gpus_per_trial=0):
         reduction_factor=2
     )
     reporter = CLIReporter(
-        # parameter_columns=['l1', 'l2', 'lr', 'batch_size'],
         metric_columns=['loss', 'training_iteration']
     )
 
     # Run the training
     result = tune.run(
-        partial(train_sumo_net, train=train, val=val, checkpoint_dir=checkpoint_dir, data_dir=data_dir),
+        partial(train_sumo_net, train=train, val=val, tuning=True),
         resources_per_trial={'cpu': 1},
         config=config,
         num_samples=num_samples,
