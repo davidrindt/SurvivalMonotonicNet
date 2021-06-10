@@ -43,7 +43,8 @@ def load_data(dataset):
     # Split the dataset
     train, val, test = np.split(df.sample(frac=1), [int(.6 * len(df)), int(.8 * len(df))])
     train, val, test = SurvivalDataset(train), SurvivalDataset(val), SurvivalDataset(test)
-    print('lens', len(train), len(val), len(test))
+    print('HERE HERE', len(train), len(val), len(test))
+    print(train, val, test)
     return train, val, test
 
 
@@ -89,7 +90,7 @@ class CovNet(nn.Module):
         super().__init__()
         self.config = config
         # self.layer_widths = self.config['cov_net_widths']
-        self.layer_widths = get_cov_widths(cov_dim[config['data']], config['width_cov'], config['num_layers_cov'])
+        self.layer_widths = get_cov_widths(config['cov_dim'], config['width_cov'], config['num_layers_cov'])
         self.linear_transforms = nn.ModuleList()
         self.activation = getattr(torch, config['activation'])
         self.dropout = nn.Dropout(self.config['dropout'])
@@ -227,14 +228,7 @@ def log_loss_sum(S, f):
     return - torch.sum(torch.log(cat + eps))
 
 
-def train_sumo_net(config, train, val, checkpoint_dir='checkpoints'):
-
-    # Define the checkpoint path
-    path = os.path.join(checkpoint_dir, 'checkpoint')
-    if not os.path.exists(path):
-        os.makedirs(checkpoint_dir)
-
-    # Define the network
+def train_sumo_net(config):
     net = TotalNet(config)
 
     # Get the device
@@ -245,6 +239,12 @@ def train_sumo_net(config, train, val, checkpoint_dir='checkpoints'):
             net = nn.DataParallel(net)
     net.to(device)
 
+    print('here')
+    train, val, test = load_data(config['data'])
+    train, val, test = train.to(device), val.to(device), test.to(device)
+
+    print('AAAAAA')
+
     # Set the optimizer
     optimizer = optim.Adam(net.parameters(), lr=config['lr'], weight_decay=config['weight_decay'])
 
@@ -253,6 +253,7 @@ def train_sumo_net(config, train, val, checkpoint_dir='checkpoints'):
     val_loader = torch.utils.data.DataLoader(val, batch_size=config['batch_size'], shuffle=True)
     best_val_loss = np.inf
 
+    print('CCCCCC')
     # Define the train loop
     for epoch in range(config['num_epochs']):
         running_loss, epoch_steps = 0.0, 0
@@ -262,7 +263,7 @@ def train_sumo_net(config, train, val, checkpoint_dir='checkpoints'):
 
             # Get the data
             cov, event_time, event = data
-            # cov, event_time, event = cov.to(device), event_time.to(device), event.to(device)
+            cov, event_time, event = cov.to(device), event_time.to(device), event.to(device)
 
             # Zero the gradient
             optimizer.zero_grad()
@@ -288,32 +289,68 @@ def train_sumo_net(config, train, val, checkpoint_dir='checkpoints'):
 
             # Get the data
             cov, event_time, event = data
-            # cov, event_time, event = cov.to(device), event_time.to(device), event.to(device)
+            cov, event_time, event = cov.to(device), event_time.to(device), event.to(device)
 
             # Zero the gradient
             optimizer.zero_grad()
 
             # Compute probabilities and the loss
             S, f = net(event_time, cov, event)
-            val_loss += log_loss_sum(S, f)
+            val_loss += log_loss_sum(S, f).cpu().detach().numpy()
 
         # print(f'epoch {epoch} val loss {val_loss / len(val)} train loss {loss}')
 
         if val_loss < best_val_loss:
-            print(f'epoch {epoch} best val loss {val_loss/ len(val)}')
+            print(f'epoch {epoch} train loss {running_loss / epoch_steps} best val loss {val_loss/ len(val)}')
             best_val_loss = val_loss
+            # torch.save((net.state_dict(), optimizer.state_dict()), path)
+
+
+        with tune.checkpoint_dir(epoch) as checkpoint_dir:
+            path = os.path.join(checkpoint_dir, "checkpoint")
             torch.save((net.state_dict(), optimizer.state_dict()), path)
 
+        tune.report(loss=val_loss)
 
     print('finished training')
 
 
 
+def hyperopt_run(hyperconfig, num_samples=2, max_num_epochs=100, gpus_per_trial=2):
+    checkpoint_dir = 'checkpoints'
+    config =  hyperconfig
+    scheduler = ASHAScheduler(
+        metric="loss",
+        mode="min",
+        max_t=max_num_epochs,
+        grace_period=1,
+        reduction_factor=2)
+
+    reporter = CLIReporter(
+        parameter_columns=["dropout"],
+        metric_columns=["loss", "training_iteration"])
+
+    result = tune.run(
+        partial(train_sumo_net),
+        resources_per_trial={"cpu": 1},
+        config=config,
+        num_samples=num_samples,
+        scheduler=scheduler,
+        progress_reporter=reporter)
+
+
+    best_trial = result.get_best_trial("loss", "min", "last")
+    print("Best trial config: {}".format(best_trial.config))
+    print("Best trial final validation loss: {}".format(
+        best_trial.last_result["loss"]))
+    print("Best trial final validation accuracy: {}".format(
+        best_trial.last_result["accuracy"]))
+
+    best_trained_model = TotalNet(best_trial.config)
+    print(f'Best trained model state dict {best_trained_model.state_dict()}')
 
 
 
-
-cov_dim = {'metabric': 9}
 
 if __name__ == '__main__':
     torch.autograd.set_detect_anomaly(True)
@@ -323,7 +360,7 @@ if __name__ == '__main__':
     # print('cov dim', train.cov_dim)
     # Define the config file
     config = {'activation': 'tanh', 'epsilon': 1e-5, 'exact': True, 'lr': 1e-2, 'num_layers_mixed': 3,
-               'num_layers_cov': 3, 'width_cov': 32, 'width_mixed': 32, 'num_layers_cov': 3, 'data': 'metabric',
+               'num_layers_cov': 3, 'width_cov': 32, 'width_mixed': 32, 'num_layers_cov': 3, 'data': 'metabric', 'cov_dim':9,
               'batch_size': 128, 'num_epochs': 100, 'dropout': 0.5,
               'weight_decay': 1e-4, 'batch_norm': False}
 
@@ -368,4 +405,24 @@ if __name__ == '__main__':
     # # print('loss', log_loss(S, f))
     # loss = log_loss(S, f)
     # loss.backward()
-    train_sumo_net(config, train, val)
+    train_sumo_net(config)
+
+
+
+    # hyperconfig = dict(activation='tanh',
+    #                    epsilon=1e-5,
+    #                    exact=True,
+    #                    lr=tune.choice([0.01, 0.001]),
+    #                    num_layers_mixed=tune.choice([3]),
+    #                    num_layers_cov=tune.choice([1, 3]),
+    #                    width_cov=tune.choice([4, 8]),
+    #                    width_mixed=tune.choice([4]),
+    #                    data='metabric',
+    #                    cov_dim=9,
+    #                    batch_size=tune.choice([32, 64, 128]),
+    #                    num_epochs=100,
+    #                    dropout=tune.choice([0., 0.2, 0.5]),
+    #                    weight_decay=tune.choice([0, 1e-4, 1e-3]),
+    #                    batch_norm=False)
+    #
+    # hyperopt_run(hyperconfig=hyperconfig)
