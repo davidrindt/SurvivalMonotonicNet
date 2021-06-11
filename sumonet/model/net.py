@@ -18,69 +18,11 @@ from torchvision.transforms import ToTensor
 from sklearn.model_selection import train_test_split
 import sklearn
 from tqdm import tqdm
-
+from sumonet.datasets.load_data import load_data
 seed = 2
 torch.manual_seed(seed)
 np.random.seed(seed)
 
-totensor = ToTensor()
-
-
-def load_data(dataset):
-    """
-    :param dataset: str - name of the dataset
-    :return: - torch datasets - a train and test set
-    """
-
-    # Load the data
-    if dataset == 'metabric':
-        df = pycox.datasets.metabric.read_df()
-    else:
-        df = None
-        print('Dataset not found')
-    df = preprocess(df)
-
-    # Split the dataset
-    train, val, test = np.split(df.sample(frac=1), [int(.6 * len(df)), int(.8 * len(df))])
-    train, val, test = SurvivalDataset(train), SurvivalDataset(val), SurvivalDataset(test)
-    return train, val, test
-
-
-def preprocess(df, scaling_type_cov='StandardScaler', scaling_type_time='StandardScaler'):
-    """
-    :param df: pd.dataframe - to be preprocessed
-    :param scaling_type_cov: str - how to scale the covariates
-    :param scaling_type_time:  str - how to scale the times
-    :return: np.ndarray - cov, time, event
-    """
-    time_scaler = getattr(sklearn.preprocessing, scaling_type_time)()
-    cov_scaler = getattr(sklearn.preprocessing, scaling_type_cov)()
-
-    # Select the covariates, times, events
-    for col in df.columns:
-        if col == 'event':
-            continue
-        elif col == 'time':
-            df[col] = time_scaler.fit_transform(df[col].to_numpy()[:, None])
-        else:
-            df[col] = cov_scaler.fit_transform(df[col].to_numpy()[:, None])
-
-    return df
-
-
-class SurvivalDataset(torch.utils.data.Dataset):
-    def __init__(self, df):
-        super().__init__()
-        self.cov = torch.from_numpy(df.drop(['duration', 'event'], axis=1).to_numpy())
-        self.cov_dim = self.cov.shape[1]
-        self.event_time = torch.from_numpy(df['duration'].to_numpy()[:, None])
-        self.event = torch.from_numpy(df['event'].to_numpy()[:, None])
-
-    def __len__(self):
-        return len(self.event)
-
-    def __getitem__(self, idx):
-        return self.cov[idx], self.event_time[idx], self.event[idx]
 
 
 class CovNet(nn.Module):
@@ -96,8 +38,11 @@ class CovNet(nn.Module):
             self.linear_transforms.append(nn.Linear(input_size, output_size))
 
     def forward(self, x):
+        print('xxx', x)
+        print('type', type(x))
         for linear_transform in self.linear_transforms:
-            x = self.dropout(get_batch_norm(self.activation(linear_transform(x)), self.config['batch_norm']))
+            print('a', linear_transform(x))
+            x = self.dropout(self.activation(linear_transform(x)))
         return x
 
 
@@ -314,13 +259,29 @@ if __name__ == '__main__':
     torch.autograd.set_detect_anomaly(True)
 
     # Initiate train, test set
-    train, val, test = load_data('metabric')
-    cov, event_time, event = train[1:4]
 
     # Define the config file
-    config = {'activation': 'tanh', 'epsilon': 1e-5, 'exact': True, 'lr': 1e-2, 'num_layers_mixed': 3,
-               'num_layers_cov': 3, 'width_cov': 32, 'width_mixed': 32, 'num_layers_cov': 3, 'data': 'metabric', 'cov_dim':9,
-              'batch_size': 128, 'num_epochs': 100, 'dropout': 0.5,
-              'weight_decay': 1e-4, 'batch_norm': False}
+    config = {'activation': 'tanh',
+              'epsilon': 1e-5,
+              'exact': True,
+              'lr': 1e-2,
+              'num_layers_mixed': 3,
+               'num_layers_cov': 3,
+              'width_cov': 32,
+              'width_mixed': 32,
+              'num_layers_cov': 3,
+              'data': 'checkerboard',
+              'cov_dim':1,
+              'batch_size': 128,
+              'num_epochs': 100,
+              'dropout': 0.5,
+              'weight_decay': 1e-4,
+              'batch_norm': False,
+              'scaling_type_time':'StandardScaler',
+              'scaling_type_cov':'StandardScaler'
+    }
+
+    train, val, test = load_data(config['data'], config)
+    cov, event_time, event = train[1:4]
 
     train_sumo_net(config, train, val)

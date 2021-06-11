@@ -8,9 +8,9 @@ import torch
 import numpy as np
 
 
-def main(config, num_samples=6, gpus_per_trial=0):
+def hyperopt_run(config, data, num_samples=6, gpus_per_trial=0):
 
-    train, val, test = load_data('metabric')
+    train, val, test = data
 
     # Define the scheduler and reporter
     scheduler = ASHAScheduler(
@@ -31,7 +31,7 @@ def main(config, num_samples=6, gpus_per_trial=0):
         config=config,
         num_samples=num_samples,
         scheduler=scheduler,
-        progress_reporter=reporter
+        progress_reporter=reporter,
     )
 
     # Get the best trial and print some numbers
@@ -75,5 +75,5 @@ if __name__ == '__main__':
                        weight_decay=tune.choice([0, 1e-4, 1e-3]),
                        batch_norm=False)
 
-    main(config)
+    hyperopt_run(config, load_data('metabric'))
 
