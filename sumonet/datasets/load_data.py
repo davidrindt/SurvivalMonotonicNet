@@ -8,7 +8,7 @@ import sklearn
 import scipy
 import math
 
-def load_data(dataset, config, n=1000, seed=1):
+def load_data(config, n=1000, seed=1):
     """
     :param dataset: str - name of the dataset
     :return: - torch datasets - a train and test set
@@ -16,6 +16,7 @@ def load_data(dataset, config, n=1000, seed=1):
 
     torch.manual_seed(seed)
     np.random.seed(seed)
+    dataset = config['data']
 
     # Load the data
     if dataset == 'metabric':

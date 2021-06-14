@@ -38,10 +38,7 @@ class CovNet(nn.Module):
             self.linear_transforms.append(nn.Linear(input_size, output_size))
 
     def forward(self, x):
-        print('xxx', x)
-        print('type', type(x))
         for linear_transform in self.linear_transforms:
-            print('a', linear_transform(x))
             x = self.dropout(self.activation(linear_transform(x)))
         return x
 
@@ -234,7 +231,7 @@ def train_sumo_net(config, train, val, tuning=False):
 
             # Compute the percentage correct
             S, f = net(event_time, cov, event)
-            loss = log_loss_mean(S, f)
+            loss = log_loss_sum(S, f)
 
             val_loss += loss.cpu().detach().numpy()
             val_steps += 1
@@ -247,7 +244,7 @@ def train_sumo_net(config, train, val, tuning=False):
             with tune.checkpoint_dir(epoch) as checkpoint_dir:
                 path = os.path.join(checkpoint_dir, "checkpoint")
                 torch.save((net.state_dict(), optimizer.state_dict()), path)
-            tune.report(loss=(val_loss / val_steps))
+            tune.report(loss=(val_loss ))
 
     print('Finished training')
 

@@ -9,7 +9,6 @@ import numpy as np
 
 
 def hyperopt_run(config, data, num_samples=6, gpus_per_trial=0):
-
     train, val, test = data
 
     # Define the scheduler and reporter
@@ -36,22 +35,12 @@ def hyperopt_run(config, data, num_samples=6, gpus_per_trial=0):
 
     # Get the best trial and print some numbers
     best_trial = result.get_best_trial('loss', 'min', 'last')
-    print(f'Best trial config {best_trial.config}')
-    print('Best trial final validation loss: {}'.format(best_trial.last_result['loss']))
-    # print('Best trail final validation accuracy: {}'.format(best_trial.last_result['accuracy']))
-
-    # Load the best model
-    best_trained_model = TotalNet(best_trial.config)
-    device = 'cpu'
-    best_trained_model.to(device)
     best_checkpoint_dir = best_trial.checkpoint.value
     model_state, optimizer_state = torch.load(os.path.join(best_checkpoint_dir, 'checkpoint'))
-    best_trained_model.load_state_dict(model_state)
-    #
-    # test_acc = test_accuracy(best_trained_model, device)
-    #
-    # print(f'Best trial test accuracy {test_acc}')
 
+    result = dict(best_config=best_trial.config, best_model_state_dict=model_state,
+                  val_loss=best_trial.last_result['loss'])
+    return result
 
 
 if __name__ == '__main__':
@@ -60,20 +49,22 @@ if __name__ == '__main__':
     np.random.seed(seed)
 
     config = dict(activation='tanh',
-                       epsilon=1e-5,
-                       exact=True,
-                       lr=tune.choice([0.01, 0.001]),
-                       num_layers_mixed=tune.choice([3]),
-                       num_layers_cov=tune.choice([1, 3, 5]),
-                       width_cov=tune.choice([4, 8, 16]),
-                       width_mixed=tune.choice([4, 8, 16]),
-                       data='metabric',
-                       cov_dim=9,
-                       batch_size=tune.choice([32, 64, 128]),
-                       num_epochs=100,
-                       dropout=tune.choice([0., 0.2, 0.5]),
-                       weight_decay=tune.choice([0, 1e-4, 1e-3]),
-                       batch_norm=False)
+                  epsilon=1e-5,
+                  exact=True,
+                  lr=tune.choice([0.01, 0.001]),
+                  num_layers_mixed=tune.choice([3]),
+                  num_layers_cov=tune.choice([1, 3, 5]),
+                  width_cov=tune.choice([4, 8, 16]),
+                  width_mixed=tune.choice([4, 8, 16]),
+                  data='metabric',
+                  cov_dim=9,
+                  batch_size=tune.choice([32, 64, 128]),
+                  num_epochs=100,
+                  dropout=tune.choice([0., 0.2, 0.5]),
+                  weight_decay=tune.choice([0, 1e-4, 1e-3]),
+                  batch_norm=False,
+                  scaling_type_time='MinMaxScaler',
+                  scaling_type_cov='MinMaxScaler'
+                  )
 
-    hyperopt_run(config, load_data('metabric'))
-
+    hyperopt_run(config, load_data(config))
