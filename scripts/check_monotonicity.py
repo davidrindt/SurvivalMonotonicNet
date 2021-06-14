@@ -7,24 +7,32 @@ import os
 import torch
 import numpy as np
 import pickle
+import matplotlib.pyplot as plt
 
 if __name__ == '__main__':
 
     # Load the result
     with open(os.path.join('results', 'checkerboard_experiment.p'), 'rb') as f:
-        loaded_result = pickle.load(f)
+        result = pickle.load(f)
 
-    loaded_best_trial = loaded_result.get_best_trial('loss', 'min', 'last')
-    loaded_best_trained_model = TotalNet(loaded_best_trial.config)
-    best_checkpoint_dir = loaded_best_trial.checkpoint.value
-    loaded_model_state, optimizer_state = torch.load(os.path.join(best_checkpoint_dir, 'checkpoint'))
-    loaded_best_trained_model.load_state_dict(loaded_model_state)
-    loaded_best_trained_model.eval()
+    config, model = result['best_config'], result['best_model_state_dict']
+
+    net = TotalNet(config)
+    net.load_state_dict(model)
+    net.eval()
 
     # Calculate some numbers
     n = 100
-    x_0 = torch.zeros(n, 1)
+    x0 = torch.zeros(n, 1)
+    x1 = torch.ones(n, 1)
     t = torch.linspace(0, 1, n)[:, None]
 
-    S_0 = loaded_best_trained_model.forward_h(t, x_0)
-    print(f' S_0 {S_0}')
+    # Get the survival curves
+    S0 = net.forward_S(t, x0).detach().numpy()
+    S1 = net.forward_S(t, x1).detach().numpy()
+
+    # Plot the curves
+    plt.plot(t, S0)
+    plt.plot(t, S1)
+    plt.show()
+

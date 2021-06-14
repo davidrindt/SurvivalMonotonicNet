@@ -8,7 +8,7 @@ import sklearn
 import scipy
 import math
 
-def load_data(config, n=1000, seed=1):
+def load_data(config, n=1000, seed=1, preprocess_data=True):
     """
     :param dataset: str - name of the dataset
     :return: - torch datasets - a train and test set
@@ -28,7 +28,8 @@ def load_data(config, n=1000, seed=1):
         print('Dataset not found')
 
     # Preprocess the dataframe
-    df = preprocess(df, config)
+    if preprocess_data:
+        df = preprocess(df, config)
 
     # Split the dataset
     train, val, test = np.split(df.sample(frac=1), [int(.6 * len(df)), int(.8 * len(df))])
