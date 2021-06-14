@@ -180,7 +180,7 @@ def train_sumo_net(config, train, val, tuning=False):
         if torch.cuda.device_count() > 1:
             net = nn.DataParallel(net)
     net.to(device)
-
+    print(f'device {device}')
     # Set the criterion and optimizer
     optimizer = optim.Adam(net.parameters(), lr=config['lr'], weight_decay=config['weight_decay'])
 
@@ -278,7 +278,7 @@ if __name__ == '__main__':
               'scaling_type_cov':'StandardScaler'
     }
 
-    train, val, test = load_data(config['data'], config)
+    train, val, test = load_data(config)
     cov, event_time, event = train[1:4]
 
     train_sumo_net(config, train, val)
