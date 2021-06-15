@@ -176,9 +176,8 @@ def train_sumo_net(config, train, val, tuning=False):
 
     device = "cpu"
     if torch.cuda.is_available():
-        device = "cuda:0"
-        if torch.cuda.device_count() > 1:
-            net = nn.DataParallel(net)
+        device = "cuda:3"
+
     net.to(device)
     print(f'device {device}')
     # Set the criterion and optimizer
