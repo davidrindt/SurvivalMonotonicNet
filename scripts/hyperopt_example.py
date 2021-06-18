@@ -1,11 +1,11 @@
-from sumonet.model.hyperopt_run import hyperopt_run
-from sumonet.datasets.load_data import load_data
-from sumonet.model.net import TotalNet
+import os
 import torch
+import pickle
 import numpy as np
 from ray import tune
-import os
-import pickle
+
+from sumonet.model.hyperopt_run import hyperopt_run
+from sumonet.data.load_data import load_data
 
 if __name__ == '__main__':
     # Initialize some variables and define the checkpoint directory

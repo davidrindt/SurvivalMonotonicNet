@@ -11,7 +11,7 @@ import math
 def load_data(config, n=1000, seed=1, preprocess_data=True):
     """
     :param dataset: str - name of the dataset
-    :return: - torch datasets - a train and test set
+    :return: - torch data - a train and test set
     """
 
     torch.manual_seed(seed)

@@ -1,28 +1,17 @@
+import os
 import numpy as np
 from ray import tune
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torchvision
-import torchvision.transforms as transforms
 from torch.utils.data import random_split
-from ray.tune import CLIReporter
-from ray.tune.schedulers import ASHAScheduler
 import torch.optim as optim
-import os
-from functools import partial
-import pycox
-import pandas as pd
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
-from torchvision.transforms import ToTensor
-from sklearn.model_selection import train_test_split
-import sklearn
-from tqdm import tqdm
-from sumonet.datasets.load_data import load_data
+
+from sumonet.data.load_data import load_data
+
 seed = 2
 torch.manual_seed(seed)
 np.random.seed(seed)
-
 
 
 class CovNet(nn.Module):
@@ -65,7 +54,6 @@ class MixedLinear(nn.Module):
         return self.bounded_linear(t) + self.linear(x)
 
 
-
 class MixedNet(nn.Module):
     """
     The mixed net consists of first a MixedLinear layer, and then BoundedLinear layers.
@@ -96,6 +84,7 @@ class MixedNet(nn.Module):
 
 
 class TotalNet(nn.Module):
+
     def __init__(self, config):
         super().__init__()
         self.config = config
@@ -132,7 +121,8 @@ class TotalNet(nn.Module):
         forward_f = self.forward_f_exact if self.config['exact'] else self.forward_f_approx
         S = self.forward_S(t_cens, x_cens)
         f = forward_f(t_obs, x_obs)
-        return S,  f
+        return S, f
+
 
 def get_batch_norm(x, batch_norm):
     if batch_norm:
@@ -142,6 +132,7 @@ def get_batch_norm(x, batch_norm):
         return result
     else:
         return x
+
 
 def get_cov_widths(cov_dim, layer_width_cov, num_layers):
     widths = [layer_width_cov for _ in range(num_layers + 1)]
@@ -168,9 +159,7 @@ def log_loss_sum(S, f):
     return - torch.sum(torch.log(cat + eps))
 
 
-
 def train_sumo_net(config, train, val, tuning=False):
-
     # Define the network
     net = TotalNet(config)
 
@@ -179,17 +168,16 @@ def train_sumo_net(config, train, val, tuning=False):
         device = "cuda:3"
 
     net.to(device)
-    print(f'device {device}')
     # Set the criterion and optimizer
     optimizer = optim.Adam(net.parameters(), lr=config['lr'], weight_decay=config['weight_decay'])
 
-
-    # Load the datasets
+    # Load the data
     trainloader = torch.utils.data.DataLoader(train, batch_size=config['batch_size'], shuffle=True)
     valloader = torch.utils.data.DataLoader(val, batch_size=config['batch_size'], shuffle=True)
     best_val_loss = np.inf
 
     for epoch in range(config['num_epochs']):
+        net.train()
         running_loss = 0.0
         epoch_steps = 0
         for i, data in enumerate(trainloader):
@@ -218,6 +206,7 @@ def train_sumo_net(config, train, val, tuning=False):
         # Validation loss
         val_loss = 0.0
         val_steps = 0
+        net.eval()
 
         # Loop over valloader
         for i, data in enumerate(valloader):
@@ -238,18 +227,16 @@ def train_sumo_net(config, train, val, tuning=False):
         if val_loss < best_val_loss:
             print(f'new best val loss {val_loss}')
             best_val_loss = val_loss
+            best_model_state_dict = net.state_dict().copy()
 
         if tuning:
             with tune.checkpoint_dir(epoch) as checkpoint_dir:
                 path = os.path.join(checkpoint_dir, "checkpoint")
                 torch.save((net.state_dict(), optimizer.state_dict()), path)
-            tune.report(loss=(val_loss ))
+            tune.report(loss=(val_loss))
 
     print('Finished training')
-
-
-
-
+    return best_model_state_dict
 
 if __name__ == '__main__':
     torch.autograd.set_detect_anomaly(True)
@@ -262,20 +249,20 @@ if __name__ == '__main__':
               'exact': True,
               'lr': 1e-2,
               'num_layers_mixed': 3,
-               'num_layers_cov': 3,
+              'num_layers_cov': 3,
               'width_cov': 32,
               'width_mixed': 32,
               'num_layers_cov': 3,
               'data': 'checkerboard',
-              'cov_dim':1,
+              'cov_dim': 1,
               'batch_size': 128,
               'num_epochs': 100,
               'dropout': 0.5,
               'weight_decay': 1e-4,
               'batch_norm': False,
-              'scaling_type_time':'StandardScaler',
-              'scaling_type_cov':'StandardScaler'
-    }
+              'scaling_type_time': 'StandardScaler',
+              'scaling_type_cov': 'StandardScaler'
+              }
 
     train, val, test = load_data(config)
     cov, event_time, event = train[1:4]
