@@ -27,7 +27,7 @@ if __name__ == '__main__':
                   cov_dim=1,
                   batch_size=tune.choice([32, 64, 128]),
                   num_epochs=100,
-                  dropout=tune.choice([0., 0.2, 0.5]),
+                  dropout=tune.choice([0.]),
                   weight_decay=tune.choice([0, 1e-4, 1e-3]),
                   batch_norm=False,
                   scaling_type_time='MinMaxScaler',
